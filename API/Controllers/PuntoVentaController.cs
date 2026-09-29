@@ -59,6 +59,19 @@ namespace API.Controllers
             return 0;
         }
 
+        private async Task<bool> ValidarAccesoVendedor(int docEntry, int docEntrySap = 0)
+        {
+            int codigoVendedorSap = ObtenerCodigoVendedorSap();
+            // Si es Supervisor / Administrador (codigoVendedorSap <= 0), tiene acceso irrestricto
+            if (codigoVendedorSap <= 0) return true;
+
+            // Si es Vendedor, consultamos el dueño de la orden
+            int? slpCodeDoc = await _puntoVenta.ObtenerVendedorPorDocEntry(docEntry, docEntrySap);
+            if (!slpCodeDoc.HasValue) return false;
+
+            return slpCodeDoc.Value == codigoVendedorSap;
+        }
+
         private bool EsUsuarioMantenerSesion()
         {
             var usuarioActual = ObtenerUsuarioActual().Trim().ToLower();
@@ -847,6 +860,20 @@ namespace API.Controllers
                     });
                 }
 
+                int codigoVendedorSap = ObtenerCodigoVendedorSap();
+                if (codigoVendedorSap > 0)
+                {
+                    request.SLPCODE = codigoVendedorSap;
+
+                    if (request.DOCENTRY > 0)
+                    {
+                        if (!await ValidarAccesoVendedor(request.DOCENTRY))
+                        {
+                            return StatusCode(403, new { error = "No tiene autorización para modificar esta orden de venta." });
+                        }
+                    }
+                }
+
                 var clienteBloqueado = await _puntoVenta.ValidarClienteBloqueado(request.CARDCODE);
                 if (clienteBloqueado != null)
                 {
@@ -965,6 +992,12 @@ namespace API.Controllers
         {
             try
             {
+                int codigoVendedorSap = ObtenerCodigoVendedorSap();
+                if (codigoVendedorSap > 0)
+                {
+                    filtro.VENDEDOR = codigoVendedorSap.ToString();
+                }
+
                 var resultados = await _puntoVenta.ListarVentas(filtro);
                 if (resultados == null || resultados.Count == 0)
                     return NotFound("No se encontraron datos para exportar.");
@@ -1031,6 +1064,12 @@ namespace API.Controllers
         {
             try
             {
+                int codigoVendedorSap = ObtenerCodigoVendedorSap();
+                if (codigoVendedorSap > 0)
+                {
+                    filtro.VENDEDOR = codigoVendedorSap.ToString();
+                }
+
                 var resultado = await _puntoVenta.ListarVentas(filtro);
                 return Ok(resultado);
             }
@@ -1047,6 +1086,12 @@ namespace API.Controllers
         {
             try
             {
+                if (data == null || data.DocEntry <= 0)
+                    return BadRequest(new { error = "El DocEntry es requerido." });
+
+                if (!await ValidarAccesoVendedor(data.DocEntry))
+                    return StatusCode(403, new { error = "No tiene autorización para consultar los logs de esta orden de venta." });
+
                 var lista = await _puntoVenta.ListarLogImportador(data.DocEntry);
                 return Ok(lista);
             }
@@ -1063,6 +1108,12 @@ namespace API.Controllers
         {
             try
             {
+                if (data == null || data.DocEntry <= 0)
+                    return BadRequest(new { error = "El DocEntry es requerido." });
+
+                if (!await ValidarAccesoVendedor(data.DocEntry))
+                    return StatusCode(403, new { error = "No tiene autorización para consultar o editar esta orden de venta." });
+
                 var resultado = await _puntoVenta.CargarVenta(data.DocEntry);
                 if (resultado is null)
                     return NotFound(new { error = "Venta no encontrada." });
@@ -1081,6 +1132,12 @@ namespace API.Controllers
         {
             try
             {
+                if (data == null || data.DocEntry <= 0)
+                    return BadRequest(new { error = "El DocEntry es requerido." });
+
+                if (!await ValidarAccesoVendedor(data.DocEntry))
+                    return StatusCode(403, new { error = "No tiene autorización para ver esta orden de venta." });
+
                 var resultado = await _puntoVenta.VerVenta(data.DocEntry);
                 if (resultado is null)
                     return NotFound(new { error = "Venta no encontrada." });
@@ -1224,6 +1281,9 @@ namespace API.Controllers
                     return BadRequest(new { error = "El número de documento no es válido." });
                 }
 
+                if (!await ValidarAccesoVendedor(data.DocEntry))
+                    return StatusCode(403, new { error = "No tiene autorización para anular esta orden de venta." });
+
                 bool puedeAnularWms = EsUsuarioAutorizadoAnularEnviadoWms();
                 await _puntoVenta.AnularVenta(data.DocEntry, puedeAnularWms, data.DOCSTATUS);
                 return Ok(new { success = true, message = "Documento anulado correctamente." });
@@ -1247,6 +1307,9 @@ namespace API.Controllers
             {
                 if (data == null || data.DocEntry <= 0)
                     return BadRequest(new { error = "El DocEntry es requerido." });
+
+                if (!await ValidarAccesoVendedor(data.DocEntry))
+                    return StatusCode(403, new { error = "No tiene autorización para reabrir esta orden de venta." });
 
                 var resultado = await _puntoVenta.PrepararReaperturaVenta(data.DocEntry, data.DOCSTATUS);
                 if (resultado is null)
@@ -1274,6 +1337,9 @@ namespace API.Controllers
                 if (data == null || data.DocEntry <= 0)
                     return BadRequest(new { error = "El DocEntry es requerido." });
 
+                if (!await ValidarAccesoVendedor(data.DocEntry))
+                    return StatusCode(403, new { error = "No tiene autorización para trasladar esta orden de venta." });
+
                 await _puntoVenta.TrasladarVenta(data.DocEntry, data.DOCSTATUS);
                 return Ok(new { success = true, message = "BORRADOR TRASLADADO CORRECTAMENTE" });
             }
@@ -1296,6 +1362,9 @@ namespace API.Controllers
             {
                 if (data == null || data.DocEntry <= 0)
                     return BadRequest(new { error = "El DocEntry es requerido." });
+
+                if (!await ValidarAccesoVendedor(data.DocEntry))
+                    return StatusCode(403, new { error = "No tiene autorización para enviar a WMS esta orden de venta." });
 
                 await _puntoVenta.EnviarWMS(data.DocEntry, data.DOCSTATUS);
                 return Ok(new { success = true, message = "DOCUMENTO ENVIADO A WMS CORRECTAMENTE" });
@@ -1341,6 +1410,9 @@ namespace API.Controllers
             {
                 if (dto.DocEntrySap <= 0)
                     return BadRequest(new { error = "REFRESQUE LA PANTALLA PARA TRAER EL NRO SAP" });
+
+                if (!await ValidarAccesoVendedor(dto.DocEntry, dto.DocEntrySap))
+                    return StatusCode(403, new { error = "No tiene autorización para imprimir esta orden de venta." });
 
                 var tabla = await _puntoVenta.ObtenerReportePreliminarSap(dto.DocEntrySap, dto.DocEntryOwtr);
 
@@ -1414,6 +1486,9 @@ namespace API.Controllers
                 if (dto.DocEntrySap <= 0)
                     return BadRequest(new { error = "DocEntry inválido." });
 
+                if (!await ValidarAccesoVendedor(dto.DocEntry, dto.DocEntrySap))
+                    return StatusCode(403, new { error = "No tiene autorización para generar el ticket de esta orden de venta." });
+
                 var tabla = await _puntoVenta.ObtenerReporteTicket(dto.DocEntrySap);
 
                 if (tabla is null)
@@ -1484,6 +1559,9 @@ namespace API.Controllers
                 if (dto.DocEntrySap <= 0)
                     return BadRequest(new { error = "REFRESQUE LA PANTALLA PARA TRAER EL NRO SAP" });
 
+                if (!await ValidarAccesoVendedor(dto.DocEntry, dto.DocEntrySap))
+                    return StatusCode(403, new { error = "No tiene autorización para generar el preliminar SAP de esta orden de venta." });
+
                 var tabla = await _puntoVenta.ObtenerReportePreliminarSap(dto.DocEntrySap, dto.DocEntryOwtr);
 
                 if (tabla is null)
@@ -1553,6 +1631,9 @@ namespace API.Controllers
             {
                 if (dto.DocEntry <= 0)
                     return BadRequest(new { error = "DocEntry inválido." });
+
+                if (!await ValidarAccesoVendedor(dto.DocEntry, dto.DocEntrySap))
+                    return StatusCode(403, new { error = "No tiene autorización para generar el preliminar PV de esta orden de venta." });
 
                 var tabla = await _puntoVenta.ObtenerReportePreliminarPv(dto.DocEntry);
 
@@ -2620,6 +2701,11 @@ namespace API.Controllers
                     return Ok(new { success = false, message = "No tiene permisos para consultar o modificar la condición de pago." });
                 }
 
+                if (!await ValidarAccesoVendedor(docEntry, docEntrySap))
+                {
+                    return Ok(new { success = false, message = "No tiene autorización para consultar o modificar la condición de pago de esta orden de venta." });
+                }
+
                 if (docEntrySap <= 0)
                 {
                     return Ok(new { success = false, message = "La orden no cuenta con un DocEntry de SAP válido." });
@@ -2741,6 +2827,11 @@ namespace API.Controllers
             if (string.IsNullOrEmpty(rol))
             {
                 return Ok(new { success = false, message = "No tiene permisos para modificar la condición de pago." });
+            }
+
+            if (!await ValidarAccesoVendedor(request.DocEntry, request.DocEntrySap))
+            {
+                return Ok(new { success = false, message = "No tiene autorización para modificar la condición de pago de esta orden de venta." });
             }
 
             if (request.NuevoGroupNum <= 0)

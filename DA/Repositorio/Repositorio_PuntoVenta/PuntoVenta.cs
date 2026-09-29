@@ -1609,6 +1609,32 @@ public class PuntoVenta : IPuntoVenta
         return Convert.ToInt32(docEntryParam.Value);
     }
 
+    public async Task<int?> ObtenerVendedorPorDocEntry(int docEntry, int docEntrySap = 0)
+    {
+        if (docEntry <= 0 && docEntrySap <= 0) return null;
+
+        using var con = new SqlConnection(_cadenaSQLPOS);
+        await con.OpenAsync();
+
+        const string sql = @"
+            SELECT TOP 1 SLPCODE 
+            FROM T_SK_ODOCS WITH (NOLOCK)
+            WHERE (@DocEntry > 0 AND DOCENTRY = @DocEntry)
+               OR (@DocEntry <= 0 AND @DocEntrySap > 0 AND DOCENTRY_SAP = @DocEntrySap)";
+
+        using var cmd = new SqlCommand(sql, con);
+        cmd.Parameters.AddWithValue("@DocEntry", docEntry);
+        cmd.Parameters.AddWithValue("@DocEntrySap", docEntrySap);
+
+        var val = await cmd.ExecuteScalarAsync();
+        if (val == null || val == DBNull.Value) return null;
+
+        if (int.TryParse(val.ToString(), out int slpCode))
+            return slpCode;
+
+        return null;
+    }
+
     public async Task<List<VentaListaDTO>> ListarVentas(VentaBusquedaFiltroDTO filtro)
     {
         var condiciones = new List<string>();

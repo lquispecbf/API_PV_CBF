@@ -32,6 +32,7 @@ public interface IPuntoVenta
     Task<Dictionary<string, List<LoteDisponibleSapDTO>>> BuscarLotesArticulosBatch(List<string> codigosArticulos, string codigoAlmacen);
     Task<VentaGuardarResponseDTO> GuardarVentaCompleta(VentaGuardarRequestDTO request);
     Task<List<VentaListaDTO>> ListarVentas(VentaBusquedaFiltroDTO filtro);
+    Task<int?> ObtenerVendedorPorDocEntry(int docEntry, int docEntrySap = 0);
     Task<List<LogImportadorDTO>> ListarLogImportador(int docEntry);
     Task<VentaCargarResponseDTO?> CargarVenta(int docEntry);
     Task<VentaCargarResponseDTO?> VerVenta(int docEntry);
