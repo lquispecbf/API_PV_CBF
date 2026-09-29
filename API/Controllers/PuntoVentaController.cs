@@ -883,6 +883,25 @@ namespace API.Controllers
                     });
                 }
 
+                // Validación obligatoria de Línea de Crédito en Servidor para órdenes definitivas
+                if (request.DOCSTATUS != "E")
+                {
+                    var validacionCredito = await _puntoVenta.ValidarLimiteCredito(
+                        request.CARDCODE ?? "",
+                        request.PAYFORM,
+                        request.IMP_NET,
+                        request.DOCENTRY_SAP.HasValue && request.DOCENTRY_SAP.Value > 0 ? request.DOCENTRY_SAP.Value : (int?)null
+                    );
+
+                    if (!validacionCredito.Valido)
+                    {
+                        return BadRequest(new
+                        {
+                            error = validacionCredito.Mensaje
+                        });
+                    }
+                }
+
                 var lugarEntrega = (request.DELIVERY_POINT ?? "").Trim().ToUpperInvariant();
                 var lugaresRestringidos = new[] { "AGENCIA", "CENTRO", "DOMICILIO" };
                 int horaEntrega = ObtenerHoraMilitar(request.DELIVERY_TIME);

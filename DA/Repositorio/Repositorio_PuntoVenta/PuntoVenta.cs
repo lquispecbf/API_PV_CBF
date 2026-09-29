@@ -471,6 +471,68 @@ public class PuntoVenta : IPuntoVenta
             DISPONIBLE_EFECTIVO = disp
         };
     }
+
+    public async Task<bool> EsFormaPagoCredito(string? payForm)
+    {
+        if (string.IsNullOrWhiteSpace(payForm)) return false;
+
+        // Si viene como código numérico (GroupNum de SAP OCTG)
+        if (int.TryParse(payForm.Trim(), out int groupNum))
+        {
+            try
+            {
+                var formas = await BuscarFormasPago(null);
+                var match = formas.FirstOrDefault(f => f.CODIGO == groupNum);
+                if (match != null)
+                {
+                    var nombre = (match.NOMBRE ?? "").ToUpperInvariant();
+                    return (nombre.Contains("CREDITO") || nombre.Contains("CRÉDITO"))
+                        && !nombre.Contains("CONTRA ENTREGA")
+                        && !nombre.Contains("CONTRAENTREGA")
+                        && !nombre.Contains("CONTADO");
+                }
+            }
+            catch
+            {
+                // Fallback si falla la consulta
+            }
+        }
+
+        // Si viene como texto descriptivo
+        var nombreTexto = payForm.Trim().ToUpperInvariant();
+        return (nombreTexto.Contains("CREDITO") || nombreTexto.Contains("CRÉDITO"))
+            && !nombreTexto.Contains("CONTRA ENTREGA")
+            && !nombreTexto.Contains("CONTRAENTREGA")
+            && !nombreTexto.Contains("CONTADO");
+    }
+
+    public async Task<(bool Valido, decimal Disponible, string? Mensaje)> ValidarLimiteCredito(string cardCode, string? payForm, decimal montoNeto, int? docEntrySap = null)
+    {
+        if (string.IsNullOrWhiteSpace(cardCode))
+            return (true, 0, null);
+
+        bool esCredito = await EsFormaPagoCredito(payForm);
+        if (!esCredito)
+            return (true, 0, null);
+
+        var desglose = await BuscarDesgloseCreditoCliente(cardCode, docEntrySap);
+        if (desglose == null || desglose.Count == 0)
+            return (true, 0, null);
+
+        var credito = desglose[0];
+        decimal disponible = credito.DISPONIBLE_EFECTIVO;
+
+        if (montoNeto > disponible)
+        {
+            return (
+                false,
+                disponible,
+                $"El total de la orden a crédito (S/ {montoNeto:N2}) supera la línea de crédito disponible en SAP (S/ {disponible:N2})."
+            );
+        }
+
+        return (true, disponible, null);
+    }
     public async Task<List<ArticuloAutocompleteDTO>> BuscarArticulosAutocomplete(string? textoBusqueda, int codigoListaPrecio, string codigoAlmacen)
     {
         var commandText = _hana.BuildProcedureCall("CBF_SP_PV_BUSCAR_ARTICULOS_AUTOCOMPLETE", 3);

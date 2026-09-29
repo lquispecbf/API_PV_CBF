@@ -38,6 +38,7 @@ public class VentaGuardarRequestDTO
     public string? DOCSTATUS { get; set; } = "Z";
     public string? DOCSTATUS_ORIGINAL { get; set; }
     public int DOCENTRY { get; set; }
+    public int? DOCENTRY_SAP { get; set; }
 
     public List<VentaDetalleDTO> DETALLE { get; set; } = new();
     public List<int> NOTAS_CREDITO { get; set; } = new();
