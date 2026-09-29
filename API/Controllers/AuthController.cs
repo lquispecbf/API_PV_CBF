@@ -3,9 +3,9 @@ using BE;
 using BE.Seguridad;
 using DA.Repositorio;
 using DA.Repositorio.Repositorio_Errores;
-using DA.Repositorio.Repositorio_Extranet;
 using DA.Repositorio.Repositorio_Menu;
 using DA.Repositorio.Repositorio_Usuario;
+using DA.Seguridad;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
@@ -125,7 +125,7 @@ namespace API.Controllers
                 }
                 else
                 {
-                    if (usuario.CONTRASEÑA == CambioClave.EncryptPlainTextToCipherText(oUsuario.CONTRASEÑA))
+                    if (usuario.CONTRASEÑA == EncriptacionHelper.EncryptPlainTextToCipherText(oUsuario.CONTRASEÑA))
                         esValido = true;
                 }
 
@@ -229,20 +229,20 @@ namespace API.Controllers
                     return BadRequest(new { resultado = 0, mensaje = "Debe ingresar la clave actual y la nueva." });
                 }
 
-                if (!CambioClave.ValidarClave(oUsuario.CLAVE_NUEVA))
+                if (!EncriptacionHelper.ValidarClave(oUsuario.CLAVE_NUEVA))
                 {
                     return BadRequest(new { resultado = 0, mensaje = "La clave debe tener al menos 8 caracteres, 1 mayúscula, 1 minúscula, 1 número y 1 carácter especial." });
                 }
 
                 string claveEnBD = await _usuario.Obtener_Clave_Usuario(Convert.ToInt32(oUsuario.ID));
-                string claveActualEncriptada = CambioClave.EncryptPlainTextToCipherText(oUsuario.CLAVE_ACTUAL);
+                string claveActualEncriptada = EncriptacionHelper.EncryptPlainTextToCipherText(oUsuario.CLAVE_ACTUAL);
 
                 if (claveEnBD != claveActualEncriptada && claveEnBD != oUsuario.CLAVE_ACTUAL)
                 {
                     return BadRequest(new { resultado = 0, mensaje = "La clave actual es incorrecta." });
                 }
 
-                string claveNuevaEncriptada = CambioClave.EncryptPlainTextToCipherText(oUsuario.CLAVE_NUEVA);
+                string claveNuevaEncriptada = EncriptacionHelper.EncryptPlainTextToCipherText(oUsuario.CLAVE_NUEVA);
                 if (claveEnBD == claveNuevaEncriptada || claveEnBD == oUsuario.CLAVE_NUEVA)
                 {
                     return BadRequest(new { resultado = 0, mensaje = "La nueva clave no puede ser igual a la actual." });

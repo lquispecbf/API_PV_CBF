@@ -8,9 +8,7 @@ using DA.API.v2;
 using DA.Configuracion;
 using DA.Repositorio;
 using DA.Repositorio.Repositorio_Auditoria;
-using DA.Repositorio.Repositorio_Catalogo_Articulos;
 using DA.Repositorio.Repositorio_Errores;
-using DA.Repositorio.Repositorio_Extranet;
 using DA.Repositorio.Repositorio_Login;
 using DA.Repositorio.Repositorio_Menu;
 using DA.Repositorio.Repositorio_PuntoVenta;
@@ -93,10 +91,8 @@ builder.Services.AddScoped<IHanaExecutor, HanaExecutor>();
 builder.Services.AddScoped<IErrores, Errores>();
 builder.Services.AddScoped<ILogin, Login>();
 builder.Services.AddScoped<IUsuario, Usuario>();
-builder.Services.AddScoped<ICambioClave, CambioClave>();
 builder.Services.AddScoped<IMenu, Menu>();
 builder.Services.AddScoped<IPuntoVenta, PuntoVenta>();
-builder.Services.AddScoped<ICatalogo_Articulo, Catalogo_Articulo>();
 
 // Auditoría de Endpoints
 builder.Services.AddScoped<IAuditoria, Auditoria>();

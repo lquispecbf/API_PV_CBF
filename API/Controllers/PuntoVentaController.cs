@@ -1,7 +1,6 @@
 using BE;
 using BE.PuntoVenta;
 using ClosedXML.Excel;
-using DA.Repositorio.Repositorio_Catalogo_Articulos;
 using DA.Repositorio.Repositorio_Errores;
 using DA.Repositorio.Repositorio_PuntoVenta;
 using Microsoft.AspNetCore.Authorization;
@@ -24,7 +23,6 @@ namespace API.Controllers
     {
         private readonly IPuntoVenta _puntoVenta;
         private readonly IErrores _errores;
-        private readonly ICatalogo_Articulo _catalogoArticulo;
         private readonly IConfiguration _configuration;
         private readonly IWebHostEnvironment _env;
         private readonly string? _rutaCrystal_API_PV;
@@ -33,13 +31,11 @@ namespace API.Controllers
         public PuntoVentaController(
             IErrores errores,
             IPuntoVenta puntoVenta,
-            ICatalogo_Articulo catalogoArticulo,
             IConfiguration configuration,
             IWebHostEnvironment env)
         {
             _errores = errores;
             _puntoVenta = puntoVenta;
-            _catalogoArticulo = catalogoArticulo;
             _configuration = configuration;
             _env = env;
             _rutaCrystal_API_PV = configuration["RutaCrystal_API_PV"];

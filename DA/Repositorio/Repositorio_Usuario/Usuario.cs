@@ -1,6 +1,6 @@
 using BE;
 using DA.Configuracion;
-using DA.Repositorio.Repositorio_Extranet;
+using DA.Seguridad;
 using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
@@ -448,7 +448,7 @@ namespace DA.Repositorio.Repositorio_Usuario
                             cmd.CommandType = CommandType.StoredProcedure;
                             cmd.Transaction = transaccion;
                             cmd.Parameters.AddWithValue("@ID_USUARIO", Convert.ToInt32(obj_Usuario.ID));
-                            cmd.Parameters.AddWithValue("@CLAVE_NUEVA", CambioClave.EncryptPlainTextToCipherText(obj_Usuario.CLAVE_NUEVA));
+                            cmd.Parameters.AddWithValue("@CLAVE_NUEVA", EncriptacionHelper.EncryptPlainTextToCipherText(obj_Usuario.CLAVE_NUEVA));
                             cmd.Parameters.AddWithValue("@USUARIO_MOD", obj_Usuario.USUARIO_MODIFICACION ?? "SYSTEM");
                             cmd.Parameters.AddWithValue("@FECHA_CAMBIO_CLAVE", 
                                 string.IsNullOrWhiteSpace(obj_Usuario.FECHA_CAMBIO_CLAVE) 
