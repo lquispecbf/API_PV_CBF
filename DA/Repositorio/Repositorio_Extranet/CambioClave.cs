@@ -1,8 +1,8 @@
-﻿using BE;
+using BE;
 using DA.Configuracion;
 using Microsoft.Extensions.Options;
 using System.Data;
-using System.Data.SqlClient;
+using Microsoft.Data.SqlClient;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -189,33 +189,28 @@ namespace DA.Repositorio.Repositorio_Extranet
         public static string EncryptPlainTextToCipherText(string PlainText)
         {
             byte[] toEncryptedArray = Encoding.UTF8.GetBytes(PlainText);
-            MD5CryptoServiceProvider objMD5CryptoService = new MD5CryptoServiceProvider();
-            byte[] securityKeyArray = objMD5CryptoService.ComputeHash(Encoding.UTF8.GetBytes("C0p17@2017"));
-            objMD5CryptoService.Clear();
-            TripleDESCryptoServiceProvider objTripleDESCryptoService = new TripleDESCryptoServiceProvider();
-            objTripleDESCryptoService.Key = securityKeyArray;
-            objTripleDESCryptoService.Mode = CipherMode.ECB;
-            objTripleDESCryptoService.Padding = PaddingMode.PKCS7;
-            ICryptoTransform objCrytpoTransform = objTripleDESCryptoService.CreateEncryptor();
+            using var objMD5 = MD5.Create();
+            byte[] securityKeyArray = objMD5.ComputeHash(Encoding.UTF8.GetBytes("C0p17@2017"));
+            using var objTripleDES = TripleDES.Create();
+            objTripleDES.Key = securityKeyArray;
+            objTripleDES.Mode = CipherMode.ECB;
+            objTripleDES.Padding = PaddingMode.PKCS7;
+            using var objCrytpoTransform = objTripleDES.CreateEncryptor();
             byte[] resultArray = objCrytpoTransform.TransformFinalBlock(toEncryptedArray, 0, toEncryptedArray.Length);
-            objTripleDESCryptoService.Clear();
             return Convert.ToBase64String(resultArray, 0, resultArray.Length);
         }
 
-        // Token: 0x0600053C RID: 1340 RVA: 0x0000A578 File Offset: 0x00008778
         public static string DecryptCipherTextToPlainText(string CipherText)
         {
             byte[] toEncryptArray = Convert.FromBase64String(CipherText);
-            MD5CryptoServiceProvider objMD5CryptoService = new MD5CryptoServiceProvider();
-            byte[] securityKeyArray = objMD5CryptoService.ComputeHash(Encoding.UTF8.GetBytes("C0p17@2017"));
-            objMD5CryptoService.Clear();
-            TripleDESCryptoServiceProvider objTripleDESCryptoService = new TripleDESCryptoServiceProvider();
-            objTripleDESCryptoService.Key = securityKeyArray;
-            objTripleDESCryptoService.Mode = CipherMode.ECB;
-            objTripleDESCryptoService.Padding = PaddingMode.PKCS7;
-            ICryptoTransform objCrytpoTransform = objTripleDESCryptoService.CreateDecryptor();
+            using var objMD5 = MD5.Create();
+            byte[] securityKeyArray = objMD5.ComputeHash(Encoding.UTF8.GetBytes("C0p17@2017"));
+            using var objTripleDES = TripleDES.Create();
+            objTripleDES.Key = securityKeyArray;
+            objTripleDES.Mode = CipherMode.ECB;
+            objTripleDES.Padding = PaddingMode.PKCS7;
+            using var objCrytpoTransform = objTripleDES.CreateDecryptor();
             byte[] resultArray = objCrytpoTransform.TransformFinalBlock(toEncryptArray, 0, toEncryptArray.Length);
-            objTripleDESCryptoService.Clear();
             return Encoding.UTF8.GetString(resultArray);
         }
 

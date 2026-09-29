@@ -4,7 +4,7 @@ using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
 using System.Data;
-using System.Data.SqlClient;
+using Microsoft.Data.SqlClient;
 using System.Diagnostics;
 using System.Linq;
 using System.Text;
@@ -60,8 +60,8 @@ namespace DA.Repositorio.Repositorio_Login
                                 FECHA_CAMBIO_CLAVE = lector[16].ToString().Trim(),   // nuevo
                                 FORZAR_CAMBIO_CLAVE = lector[17].ToString().Trim(),    // nuevo
                                 CODIGO_VENDEDOR_SAP = lector.IsDBNull(18)
-                                    ? null
-                                    : lector.GetInt32(18)
+                                    ? 0
+                                    : Convert.ToInt32(lector[18])
                             };
                             lista.Add(obj_BE);
                         }

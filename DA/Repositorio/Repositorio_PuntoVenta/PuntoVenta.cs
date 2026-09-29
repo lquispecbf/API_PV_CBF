@@ -7,7 +7,7 @@ using Microsoft.Extensions.Options;
 using System.Collections.Concurrent;
 using System.Data;
 using System.Data.Common;
-using System.Data.SqlClient;
+using Microsoft.Data.SqlClient;
 using System.Diagnostics;
 using System.Globalization;
 using System.Net.Http;
@@ -86,7 +86,7 @@ public class PuntoVenta : IPuntoVenta
 
         return new ListaPrecioSapDTO
         {
-            CODIGO = reader.IsDBNull(ordCodigo) ? 0 : (int)reader.GetInt16(ordCodigo),
+            CODIGO = reader.IsDBNull(ordCodigo) ? 0 : Convert.ToInt32(reader.GetValue(ordCodigo)),
             NOMBRE = reader.IsDBNull(ordNombre) ? null : reader.GetString(ordNombre),
             ESTADO = reader.IsDBNull(ordEstado) ? null : reader.GetString(ordEstado)
         };
@@ -111,7 +111,7 @@ public class PuntoVenta : IPuntoVenta
 
         return new VendedorSapDTO
         {
-            CODIGO = reader.IsDBNull(ordCodigo) ? 0 : reader.GetInt32(ordCodigo),
+            CODIGO = reader.IsDBNull(ordCodigo) ? 0 : Convert.ToInt32(reader.GetValue(ordCodigo)),
             NOMBRE = reader.IsDBNull(ordNombre) ? null : reader.GetString(ordNombre),
             ESTADO = reader.IsDBNull(ordEstado) ? null : reader.GetString(ordEstado)
         };
@@ -519,7 +519,7 @@ public class PuntoVenta : IPuntoVenta
 
         return await _hana.QueryListAsync(
             commandText,
-            reader => reader.GetString(0),
+            reader => reader.IsDBNull(0) ? string.Empty : (reader.GetValue(0)?.ToString() ?? string.Empty),
             CommandType.Text
         );
     }
@@ -881,10 +881,10 @@ public class PuntoVenta : IPuntoVenta
             CODIGO = reader.IsDBNull(ordCodigo) ? null : reader.GetString(ordCodigo),
             DESCRIPCION = reader.IsDBNull(ordDescripcion) ? null : reader.GetString(ordDescripcion),
             UMD = reader.IsDBNull(ordUmd) ? null : reader.GetString(ordUmd),
-            PRECIO = reader.IsDBNull(ordPrecio) ? 0 : reader.GetDecimal(ordPrecio),
-            PRECIO_CAJA = reader.IsDBNull(ordPrecioCaja) ? 0 : reader.GetDecimal(ordPrecioCaja),
-            STOCK = reader.IsDBNull(ordStock) ? 0 : reader.GetDecimal(ordStock),
-            STOCK_CAJAS = reader.IsDBNull(ordStockCajas) ? 0 : reader.GetDecimal(ordStockCajas),
+            PRECIO = reader.IsDBNull(ordPrecio) ? 0 : Convert.ToDecimal(reader[ordPrecio]),
+            PRECIO_CAJA = reader.IsDBNull(ordPrecioCaja) ? 0 : Convert.ToDecimal(reader[ordPrecioCaja]),
+            STOCK = reader.IsDBNull(ordStock) ? 0 : Convert.ToDecimal(reader[ordStock]),
+            STOCK_CAJAS = reader.IsDBNull(ordStockCajas) ? 0 : Convert.ToDecimal(reader[ordStockCajas]),
             GESTIONA_LOTE = reader.IsDBNull(ordGestionaLote) ? null : reader.GetString(ordGestionaLote),
             LOTE_PROXIMO = reader.IsDBNull(ordLoteProximo) ? null : reader.GetString(ordLoteProximo),
             FECHA_VENCIMIENTO = reader.IsDBNull(ordFechaVencimiento) ? null : reader.GetValue(ordFechaVencimiento).ToString(),
@@ -898,8 +898,8 @@ public class PuntoVenta : IPuntoVenta
             LABORATORIO = reader.IsDBNull(ordLaboratorio) ? null : reader.GetString(ordLaboratorio),
             CODEBARS = reader.IsDBNull(ordCodebars) ? null : reader.GetString(ordCodebars),
             IGV_AFECT = reader.IsDBNull(ordIgvAfect) ? null : reader.GetString(ordIgvAfect),
-            UOMENTRY = reader.IsDBNull(ordUomentry) ? 0 : reader.GetInt32(ordUomentry),
-            PRICE_BEF = reader.IsDBNull(ordPriceBef) ? 0 : reader.GetDecimal(ordPriceBef)
+            UOMENTRY = reader.IsDBNull(ordUomentry) ? 0 : Convert.ToInt32(reader[ordUomentry]),
+            PRICE_BEF = reader.IsDBNull(ordPriceBef) ? 0 : Convert.ToDecimal(reader[ordPriceBef])
         };
     }
     public async Task<List<UnidadMedidaArticuloSapDTO>> BuscarUmdArticulo(string codigoArticulo)
@@ -1209,6 +1209,30 @@ public class PuntoVenta : IPuntoVenta
             {
                 throw new InvalidOperationException(
                     $"No se pueden guardar los cambios en la orden N° {request.DOCENTRY} porque ya fue procesada en SAP en segundo plano. Los cambios NO han sido guardados. Por favor refresque la pestaña Búsqueda.");
+            }
+
+            // Validación de concurrencia para órdenes reabiertas y borradores de BD:
+            if (!string.IsNullOrWhiteSpace(request.DOCSTATUS_ORIGINAL))
+            {
+                var docStatusOrig = request.DOCSTATUS_ORIGINAL.Trim().ToUpper();
+                if (docStatusOrig is "C" or "CANCELADO" or "CANCELADO SAP")
+                {
+                    if (estadoInicial.DocStatus is not ("C" or "Z"))
+                    {
+                        string descActual = ObtenerDescripcionEstado(estadoInicial);
+                        throw new InvalidOperationException(
+                            $"La orden N° {request.DOCENTRY} ya fue modificada o procesada en otra instancia (Estado actual en base de datos: '{descActual}'). Los datos NO se pueden sobreescribir sobre esta orden.");
+                    }
+                }
+                else if (docStatusOrig is "E" or "BORRADOR")
+                {
+                    if (estadoInicial.DocStatus != "E" && estadoInicial.DocStatus != "C")
+                    {
+                        string descActual = ObtenerDescripcionEstado(estadoInicial);
+                        throw new InvalidOperationException(
+                            $"El borrador N° {request.DOCENTRY} ya fue procesado o modificado en otra instancia (Estado actual en base de datos: '{descActual}'). Los datos NO se pueden sobreescribir.");
+                    }
+                }
             }
 
             // Si la orden tiene (o adquirió por carrera durante la edición) un número SAP previo:

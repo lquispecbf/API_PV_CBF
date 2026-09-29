@@ -8,6 +8,7 @@ using DA.API.v2;
 using DA.Configuracion;
 using DA.Repositorio;
 using DA.Repositorio.Repositorio_Auditoria;
+using DA.Repositorio.Repositorio_Catalogo_Articulos;
 using DA.Repositorio.Repositorio_Errores;
 using DA.Repositorio.Repositorio_Extranet;
 using DA.Repositorio.Repositorio_Login;
@@ -95,6 +96,7 @@ builder.Services.AddScoped<IUsuario, Usuario>();
 builder.Services.AddScoped<ICambioClave, CambioClave>();
 builder.Services.AddScoped<IMenu, Menu>();
 builder.Services.AddScoped<IPuntoVenta, PuntoVenta>();
+builder.Services.AddScoped<ICatalogo_Articulo, Catalogo_Articulo>();
 
 // Auditoría de Endpoints
 builder.Services.AddScoped<IAuditoria, Auditoria>();
@@ -120,6 +122,7 @@ builder.Services.AddCors(options =>
 builder.Services.AddControllers(options =>
 {
     options.Filters.AddService<FiltroAuditoriaAttribute>();
+    options.SuppressImplicitRequiredAttributeForNonNullableReferenceTypes = true;
 })
 .AddJsonOptions(options =>
 {
@@ -136,6 +139,8 @@ builder.Services.AddSwaggerGen(options =>
         Version = "v1",
         Description = "API RESTful protegida con JWT para el sistema de Punto de Venta CBF"
     });
+
+    options.CustomSchemaIds(type => type.FullName ?? type.Name);
 
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
@@ -201,7 +206,10 @@ try
         });
     }
 
-    app.UseHttpsRedirection();
+    if (!app.Environment.IsDevelopment())
+    {
+        app.UseHttpsRedirection();
+    }
     app.UseCors("CorsPolicy");
 
     // Normalización de doble slash

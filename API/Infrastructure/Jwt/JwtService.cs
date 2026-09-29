@@ -34,7 +34,7 @@ namespace API.Infrastructure.Jwt
                 new Claim("nombres", $"{usuario.NOMBRES ?? ""} {usuario.APELLIDOS ?? ""}".Trim()),
                 new Claim("id_perfil", usuario.ID_MENU.ToString()),
                 new Claim("nombre_perfil", usuario.PERFIL ?? string.Empty),
-                new Claim("id_vendedor", usuario.CODIGO_VENDEDOR_SAP?.ToString() ?? ""),
+                new Claim("id_vendedor", (usuario.CODIGO_VENDEDOR_SAP ?? 0).ToString()),
                 new Claim("area", usuario.AREA ?? ""),
                 new Claim("departamento", usuario.DEPARTAMENTO ?? "")
             };

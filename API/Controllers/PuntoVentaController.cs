@@ -1,5 +1,7 @@
+using BE;
 using BE.PuntoVenta;
 using ClosedXML.Excel;
+using DA.Repositorio.Repositorio_Catalogo_Articulos;
 using DA.Repositorio.Repositorio_Errores;
 using DA.Repositorio.Repositorio_PuntoVenta;
 using Microsoft.AspNetCore.Authorization;
@@ -17,11 +19,12 @@ namespace API.Controllers
 {
     [Authorize]
     [ApiController]
-    [Route("api/[controller]")]
+    [Route("api/[controller]/[action]")]
     public class PuntoVentaController : ControllerBase
     {
         private readonly IPuntoVenta _puntoVenta;
         private readonly IErrores _errores;
+        private readonly ICatalogo_Articulo _catalogoArticulo;
         private readonly IConfiguration _configuration;
         private readonly IWebHostEnvironment _env;
         private readonly string? _rutaCrystal_API_PV;
@@ -30,11 +33,13 @@ namespace API.Controllers
         public PuntoVentaController(
             IErrores errores,
             IPuntoVenta puntoVenta,
+            ICatalogo_Articulo catalogoArticulo,
             IConfiguration configuration,
             IWebHostEnvironment env)
         {
             _errores = errores;
             _puntoVenta = puntoVenta;
+            _catalogoArticulo = catalogoArticulo;
             _configuration = configuration;
             _env = env;
             _rutaCrystal_API_PV = configuration["RutaCrystal_API_PV"];
@@ -51,11 +56,11 @@ namespace API.Controllers
             return User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("id_usuario") ?? "0";
         }
 
-        private int? ObtenerCodigoVendedorSap()
+        private int ObtenerCodigoVendedorSap()
         {
             var val = User.FindFirstValue("id_vendedor");
-            if (int.TryParse(val, out int id) && id > 0) return id;
-            return null;
+            if (int.TryParse(val, out int id)) return id;
+            return 0;
         }
 
         private bool EsUsuarioMantenerSesion()
@@ -80,7 +85,7 @@ namespace API.Controllers
             return usuariosHabilitados.Any(u => u.Trim().Equals(usuarioActual, StringComparison.OrdinalIgnoreCase));
         }
 
-        [HttpGet("KeepAlive")]
+        [HttpGet]
         public IActionResult KeepAlive()
         {
             var idUsuario = ObtenerIdUsuarioActual();
@@ -99,19 +104,19 @@ namespace API.Controllers
             return texto.Substring(0, max);
         }
 
-        [HttpGet("VentaInfo")]
+        [HttpGet]
         public IActionResult VentaInfo()
         {
             return Ok(new
             {
-                UsuarioSapCode = ObtenerCodigoVendedorSap() ?? 0,
+                UsuarioSapCode = ObtenerCodigoVendedorSap(),
                 MantenerSesionPuntoVenta = EsUsuarioMantenerSesion(),
                 PuedeAnularEnviadoWms = EsUsuarioAutorizadoAnularEnviadoWms(),
                 PuedeModificarCondicionPago = !string.IsNullOrEmpty(ObtenerRolCondicionPagoUsuario())
             });
         }
 
-        [HttpGet("StockPorAlmacenInfo")]
+        [HttpGet]
         public IActionResult StockPorAlmacenInfo()
         {
             return Ok(new { MantenerSesionPuntoVenta = EsUsuarioMantenerSesion() });
@@ -204,6 +209,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [HttpGet]
         public async Task<IActionResult> Buscar_Cliente(string criterioBusqueda)
         {
             try
@@ -220,7 +226,9 @@ namespace API.Controllers
                 return StatusCode(500, new { error = ex.Message });
             }
         }
+
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [HttpGet]
         public async Task<IActionResult> Buscar_ListaPrecios(string? nombreBusqueda)
         {
             try
@@ -236,23 +244,15 @@ namespace API.Controllers
                 return StatusCode(500, new { error = "Error al buscar listas de precio." });
             }
         }
+
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [HttpGet]
         public async Task<IActionResult> Buscar_Vendedores()
         {
             try
             {
-                int? codigoVendedorSap = ObtenerCodigoVendedorSap();
-
-                if (!codigoVendedorSap.HasValue)
-                {
-                    return BadRequest(new
-                    {
-                        error = "El usuario no tiene vendedor SAP configurado."
-                    });
-                }
-
-                var lista = await _puntoVenta.BuscarVendedores(codigoVendedorSap.Value);
-
+                int codigoVendedorSap = ObtenerCodigoVendedorSap();
+                var lista = await _puntoVenta.BuscarVendedores(codigoVendedorSap);
                 return Ok(lista);
             }
             catch (Exception ex)
@@ -261,11 +261,13 @@ namespace API.Controllers
 
                 return StatusCode(500, new
                 {
-                    error = "Error al buscar vendedores."
+                    error = "Error al buscar vendedores: " + ex.Message
                 });
             }
         }
+
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [HttpGet]
         public async Task<IActionResult> Buscar_Almacenes(string? nombreBusqueda)
         {
             try
@@ -284,7 +286,9 @@ namespace API.Controllers
                 });
             }
         }
+
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [HttpGet]
         public async Task<IActionResult> Buscar_DireccionesCliente(string codigoCliente)
         {
             try
@@ -306,7 +310,9 @@ namespace API.Controllers
                 });
             }
         }
+
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [HttpGet]
         public async Task<IActionResult> Buscar_TiposEmbalaje()
         {
             try
@@ -325,7 +331,9 @@ namespace API.Controllers
                 });
             }
         }
+
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [HttpGet]
         public async Task<IActionResult> Buscar_LugaresEntrega()
         {
             try
@@ -344,7 +352,9 @@ namespace API.Controllers
                 });
             }
         }
+
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [HttpGet]
         public async Task<IActionResult> Buscar_HorasEntrega()
         {
             try
@@ -363,7 +373,9 @@ namespace API.Controllers
                 });
             }
         }
+
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [HttpGet]
         public async Task<IActionResult> Buscar_ModosEnvio()
         {
             try
@@ -382,7 +394,9 @@ namespace API.Controllers
                 });
             }
         }
+
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [HttpGet]
         public async Task<IActionResult> Buscar_FormasPago(string? condicionPago)
         {
             try
@@ -401,7 +415,9 @@ namespace API.Controllers
                 });
             }
         }
+
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [HttpGet]
         public async Task<IActionResult> Buscar_TiposComprobante(string? nombreBusqueda)
         {
             try
@@ -421,7 +437,9 @@ namespace API.Controllers
                 });
             }
         }
+
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [HttpGet]
         public async Task<IActionResult> Buscar_NotasCreditoCliente(string codigoCliente)
         {
             try
@@ -443,7 +461,9 @@ namespace API.Controllers
                 });
             }
         }
+
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [HttpGet]
         public async Task<IActionResult> Buscar_DesgloseCreditoCliente(string codigoCliente, int? docEntrySap = null)
         {
             try
@@ -465,7 +485,9 @@ namespace API.Controllers
                 });
             }
         }
+
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [HttpGet]
         public async Task<IActionResult> Buscar_ArticulosPorCodigo(string codigoArticulo, int codigoListaPrecio, string codigoAlmacen)
         {
             try
@@ -488,7 +510,9 @@ namespace API.Controllers
                 });
             }
         }
+
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [HttpGet]
         public async Task<IActionResult> Buscar_DetalleArticuloVenta(string codigoArticulo, int codigoListaPrecio, string codigoAlmacen, string? codigoCliente, int? codigoUmd)
         {
             try
@@ -573,6 +597,7 @@ namespace API.Controllers
             }
         }
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [HttpGet]
         public async Task<IActionResult> Buscar_ArticulosAutocomplete(string? textoBusqueda, int codigoListaPrecio, string codigoAlmacen)
         {
             try
@@ -598,7 +623,9 @@ namespace API.Controllers
                 });
             }
         }
+
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [HttpGet]
         public async Task<IActionResult> Buscar_ArticulosDescripcion(string? textoBusqueda, int codigoListaPrecio, string codigoAlmacen)
         {
             try
@@ -624,7 +651,9 @@ namespace API.Controllers
                 });
             }
         }
+
         [RequierePermisoModulo("PuntoVenta:Venta", "PuntoVenta:ArticuloFraccionado")]
+        [HttpGet]
         public async Task<IActionResult> Buscar_UmdArticulo(string codigoArticulo)
         {
             try
@@ -646,7 +675,9 @@ namespace API.Controllers
                 });
             }
         }
+
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [HttpGet]
         public async Task<IActionResult> Buscar_PromoArticulo(string codigoArticulo, string codigoCliente, int codigoListaPrecio, int codigoUmd)
         {
             try
@@ -673,7 +704,9 @@ namespace API.Controllers
                 });
             }
         }
+
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [HttpGet]
         public async Task<IActionResult> Buscar_LotesArticulo(string codigoArticulo, string codigoAlmacen)
         {
             try
@@ -695,6 +728,7 @@ namespace API.Controllers
                 });
             }
         }
+
         [RequierePermisoModulo("PuntoVenta:Venta")]
         [HttpPost]
         public async Task<IActionResult> Buscar_LotesArticulosBatch([FromBody] LotesBatchRequestDTO request)
@@ -718,7 +752,9 @@ namespace API.Controllers
                 });
             }
         }
+
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [HttpGet]
         public async Task<IActionResult> Buscar_ArticulosAvanzado(
             string? descripcion,
             string? codigo,
@@ -726,19 +762,23 @@ namespace API.Controllers
             string? principioActivo,
             string? titularRs,
             int codigoListaPrecio,
-            string codigoAlmacen)
+            string codigoAlmacen,
+            string? textoBusqueda = null,
+            string? rubro = null)
         {
             try
             {
-                if (string.IsNullOrWhiteSpace(descripcion)
+                var busquedaDesc = !string.IsNullOrWhiteSpace(descripcion) ? descripcion : textoBusqueda;
+                if (string.IsNullOrWhiteSpace(busquedaDesc)
                     && string.IsNullOrWhiteSpace(codigo)
                     && string.IsNullOrWhiteSpace(laboratorio)
                     && string.IsNullOrWhiteSpace(principioActivo)
-                    && string.IsNullOrWhiteSpace(titularRs))
+                    && string.IsNullOrWhiteSpace(titularRs)
+                    && string.IsNullOrWhiteSpace(rubro))
                     return Ok(new List<ArticuloBusquedaSapDTO>());
 
                 var lista = await _puntoVenta.BuscarArticulosDescripcion(
-                    TruncarTexto(descripcion, 200),
+                    TruncarTexto(busquedaDesc, 200),
                     TruncarTexto(codigo, 200),
                     TruncarTexto(laboratorio, 200),
                     TruncarTexto(principioActivo, 200),
@@ -755,7 +795,7 @@ namespace API.Controllers
 
                 return StatusCode(500, new
                 {
-                    error = "Error al buscar artículos."
+                    error = "Error al buscar artículos: " + ex.Message
                 });
             }
         }
@@ -1135,19 +1175,8 @@ namespace API.Controllers
                     return Ok(new { imgRuta = "" });
                 }
 
-                // Si está dentro del wwwroot, podemos servir la ruta estática directa
-                if (!string.IsNullOrWhiteSpace(_env.WebRootPath) &&
-                    rutaFisica.StartsWith(_env.WebRootPath, StringComparison.OrdinalIgnoreCase))
-                {
-                    string rutaRelativa = rutaFisica.Substring(_env.WebRootPath.Length).Replace('\\', '/');
-                    if (!rutaRelativa.StartsWith("/")) rutaRelativa = "/" + rutaRelativa;
-                    Log.Information("[Obtener_ImagenArticulo] Sirviendo imagen estática: {RutaRelativa}", rutaRelativa);
-                    return Ok(new { imgRuta = rutaRelativa });
-                }
-
-                // Si está fuera de wwwroot (ej: disco D u otra carpeta física), servir vía endpoint seguro
+                // Servir vía endpoint seguro directamente desde la ruta física configurada en appsettings
                 string urlVirtual = $"/PuntoVenta/Ver_ImagenArticulo?codigoArticulo={Uri.EscapeDataString(codigoArticulo.Trim())}";
-                Log.Information("[Obtener_ImagenArticulo] Sirviendo imagen virtual: {UrlVirtual}", urlVirtual);
                 return Ok(new { imgRuta = urlVirtual });
             }
             catch (Exception ex)
@@ -1309,8 +1338,8 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:Venta")]
-        [HttpPost, HttpGet]
-        public async Task<IActionResult> Imprimir_Venta(VentaReporteParamDTO dto)
+        [HttpGet]
+        public async Task<IActionResult> Imprimir_Venta([FromQuery] VentaReporteParamDTO dto)
         {
             try
             {
@@ -1381,8 +1410,8 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:Venta")]
-        [HttpPost, HttpGet]
-        public async Task<IActionResult> Ticket_Venta(VentaReporteParamDTO dto)
+        [HttpGet]
+        public async Task<IActionResult> Ticket_Venta([FromQuery] VentaReporteParamDTO dto)
         {
             try
             {
@@ -1451,8 +1480,8 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:Venta")]
-        [HttpPost, HttpGet]
-        public async Task<IActionResult> PreliminarSap_Venta(VentaReporteParamDTO dto)
+        [HttpGet]
+        public async Task<IActionResult> PreliminarSap_Venta([FromQuery] VentaReporteParamDTO dto)
         {
             try
             {
@@ -1521,8 +1550,8 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:Venta")]
-        [HttpPost, HttpGet]
-        public async Task<IActionResult> PreliminarPv_Venta(VentaReporteParamDTO dto)
+        [HttpGet]
+        public async Task<IActionResult> PreliminarPv_Venta([FromQuery] VentaReporteParamDTO dto)
         {
             try
             {
@@ -1591,7 +1620,7 @@ namespace API.Controllers
 
         // ========== CLIENTES BLOQUEADOS ==========
 
-        [HttpGet("ClienteBloqueadoInfo")]
+        [HttpGet]
         public IActionResult ClienteBloqueadoInfo()
         {
             return Ok(new { MantenerSesionPuntoVenta = EsUsuarioMantenerSesion() });
@@ -1952,7 +1981,7 @@ namespace API.Controllers
 
         // ========== ARTICULOS FRACCIONADOS ==========
 
-        [HttpGet("ArticuloFraccionadoInfo")]
+        [HttpGet]
         public IActionResult ArticuloFraccionadoInfo()
         {
             return Ok(new { MantenerSesionPuntoVenta = EsUsuarioMantenerSesion() });

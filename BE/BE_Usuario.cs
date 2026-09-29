@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -35,7 +35,7 @@ namespace BE
         public string? PERFIL { get; set; }
         public string? CARGO { get; set; }
 
-        public string GRUPO_MENU { get; set; }
+        public string? GRUPO_MENU { get; set; }
 
         public string? NIVEL { get; set; }
 
@@ -47,7 +47,7 @@ namespace BE
         public string? ULTIMO_CAMBIO_CLAVE { get; set; }
 
         public int? DIAS_RESTANTES_CLAVE { get; set; }
-        public string PROXIMO_VENCER { get; set; }
+        public string? PROXIMO_VENCER { get; set; }
         public bool BLOQUEADO { get; set; }
         public int INTENTOS { get; set; }
 

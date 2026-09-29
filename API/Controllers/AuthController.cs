@@ -290,6 +290,30 @@ namespace API.Controllers
             });
         }
 
+        [HttpPost("mostrar-menu")]
+        [HttpPost("Mostrar_Menu")]
+        [Authorize]
+        public async Task<IActionResult> Mostrar_Menu([FromBody] BE_Usuario? obj)
+        {
+            try
+            {
+                int idUsuario = 0;
+                var idClaim = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("id_usuario");
+                if (!int.TryParse(idClaim, out idUsuario) && obj != null)
+                {
+                    idUsuario = obj.ID;
+                }
+
+                var lista = await _menu.Mostrar_Menu(new BE_Usuario { ID = idUsuario });
+                return Ok(lista ?? new List<BE_Usuario>());
+            }
+            catch (Exception ex)
+            {
+                await _errores.Insertar_Exception(ex);
+                return Ok(new List<BE_Usuario>());
+            }
+        }
+
         [HttpGet("perfil")]
         [Authorize]
         public IActionResult Perfil()

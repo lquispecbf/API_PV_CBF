@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -16,7 +16,7 @@ namespace BE
         public int ORDEN_MENU { get; set; }
         public string? ESTADO_MENU { get; set; }
 
-        public string GRUPO_MENU { get; set; }
+        public string? GRUPO_MENU { get; set; }
 
     }
 }
