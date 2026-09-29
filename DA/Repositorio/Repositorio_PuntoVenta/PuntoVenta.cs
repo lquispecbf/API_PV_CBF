@@ -3022,6 +3022,18 @@ public class PuntoVenta : IPuntoVenta
             {
                 await FileLogger.Info($"[OK] Orden '{docEntrySap}' (DocNum: {docNumSap}) actualizada exitosamente en SAP con PaymentGroupCode={groupNumNuevo}.", logContext);
 
+                // 1. Actualizar EXCLUSIVAMENTE el campo de condición de pago en Punto de Venta (T_SK_ODOCS)
+                try
+                {
+                    int filasAfectadas = await ActualizarCondicionPagoPuntoVenta(docEntryPv, docEntrySap, groupNumNuevo, condicionNuevo);
+                    await FileLogger.Info($"[OK-PV] PAYFORM actualizado en T_SK_ODOCS para DocEntry PV: {docEntryPv} / SAP: {docEntrySap}. Filas afectadas: {filasAfectadas}", logContext);
+                }
+                catch (Exception exPv)
+                {
+                    await FileLogger.Error($"Error al actualizar PAYFORM en T_SK_ODOCS para orden SAP '{docEntrySap}': {exPv.Message}", logContext);
+                }
+
+                // 2. Registrar historial de auditoría
                 try
                 {
                     await RegistrarHistorialCondicionPago(new BE_HistorialCondicionPago
@@ -3045,7 +3057,7 @@ public class PuntoVenta : IPuntoVenta
                 return new
                 {
                     success = true,
-                    message = "Condición de pago actualizada correctamente en SAP."
+                    message = "Condición de pago actualizada correctamente en SAP y Punto de Venta."
                 };
             }
 
@@ -3136,5 +3148,26 @@ public class PuntoVenta : IPuntoVenta
             FECHA_REGISTRO_TEXTO = reader.IsDBNull(ordFechaRegTxt) ? null : reader.GetString(ordFechaRegTxt),
             MOTIVO = reader.IsDBNull(ordMotivo) ? null : reader.GetString(ordMotivo)
         };
+    }
+
+    public async Task<int> ActualizarCondicionPagoPuntoVenta(int docEntryPv, int docEntrySap, int groupNumNuevo, string? condicionNuevo = null)
+    {
+        if (docEntryPv <= 0 && docEntrySap <= 0) return 0;
+
+        using var con = new SqlConnection(_cadenaSQLPOS);
+        await con.OpenAsync();
+
+        string valorPayform = groupNumNuevo > 0 ? groupNumNuevo.ToString() : (condicionNuevo?.Trim() ?? "");
+
+        const string sql = @"
+            UPDATE T_SK_ODOCS
+            SET PAYFORM = @PAYFORM
+            WHERE (DOCENTRY = @DOCENTRY_PV)";
+
+        using var cmd = new SqlCommand(sql, con);
+        cmd.Parameters.AddWithValue("@PAYFORM", string.IsNullOrWhiteSpace(valorPayform) ? (object)DBNull.Value : valorPayform);
+        cmd.Parameters.AddWithValue("@DOCENTRY_PV", docEntryPv);
+
+        return await cmd.ExecuteNonQueryAsync();
     }
 }

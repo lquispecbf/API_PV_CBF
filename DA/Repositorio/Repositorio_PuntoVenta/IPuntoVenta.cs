@@ -70,6 +70,7 @@ public interface IPuntoVenta
     // Modificar Condición de Pago
     Task<OrdenCondicionPagoSapDTO?> ObtenerOrdenCondicionPagoSap(int docEntrySap);
     Task<object> ActualizarCondicionPago_ServiceLayer(int docEntryPv, int docEntrySap, int groupNumAnterior, string? condicionAnterior, int groupNumNuevo, string condicionNuevo, string usuario, int? docNumSap = null, string? motivo = null);
+    Task<int> ActualizarCondicionPagoPuntoVenta(int docEntryPv, int docEntrySap, int groupNumNuevo, string? condicionNuevo = null);
     Task<int> RegistrarHistorialCondicionPago(BE_HistorialCondicionPago historial);
     Task<List<BE_HistorialCondicionPago>> ListarHistorialCondicionPago(int docEntryPv, int docEntrySap);
 }
