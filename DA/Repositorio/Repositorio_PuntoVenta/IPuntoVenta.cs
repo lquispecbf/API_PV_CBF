@@ -21,6 +21,7 @@ public interface IPuntoVenta
     Task<List<ClienteDesgloseCreditoSapDTO>> BuscarDesgloseCreditoCliente(string codigoCliente, int? docEntrySap = null);
     Task<bool> EsFormaPagoCredito(string? payForm);
     Task<(bool Valido, decimal Disponible, string? Mensaje)> ValidarLimiteCredito(string cardCode, string? payForm, decimal montoNeto, int? docEntrySap = null);
+    Task<(bool Valido, string? Mensaje)> ValidarPreciosYPromociones(VentaGuardarRequestDTO request);
     Task<List<ArticuloAutocompleteDTO>> BuscarArticulosAutocomplete(string? textoBusqueda, int codigoListaPrecio, string codigoAlmacen);
     Task<List<ArticuloBusquedaSapDTO>> BuscarArticulosDescripcion(string? descripcion, string? codigo, string? laboratorio, string? principioActivo, int codigoListaPrecio, string codigoAlmacen, string? titularRs = null);
     Task<List<ArticuloBusquedaSapDTO>> BuscarArticulosPorCodigo(string codigoArticulo, int codigoListaPrecio, string codigoAlmacen);

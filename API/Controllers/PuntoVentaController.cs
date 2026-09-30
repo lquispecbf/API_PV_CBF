@@ -987,6 +987,19 @@ namespace API.Controllers
                     return BadRequest(new { error = string.Join(" ", erroresFraccionados) });
                 }
 
+                // Validación obligatoria de Precios y Promociones en Servidor contra SAP HANA
+                if (request.DOCSTATUS != "E")
+                {
+                    var validacionPrecios = await _puntoVenta.ValidarPreciosYPromociones(request);
+                    if (!validacionPrecios.Valido)
+                    {
+                        return BadRequest(new
+                        {
+                            error = validacionPrecios.Mensaje
+                        });
+                    }
+                }
+
                 var resultado = await _puntoVenta.GuardarVentaCompleta(request);
 
                 if (resultado.EXITO)
@@ -1015,6 +1028,24 @@ namespace API.Controllers
                 if (codigoVendedorSap > 0)
                 {
                     filtro.VENDEDOR = codigoVendedorSap.ToString();
+                }
+
+                // Validación de rango máximo de fechas para proteger recursos del servidor (OWASP A01 / A04)
+                if (!string.IsNullOrWhiteSpace(filtro.FECHA_INICIO) && !string.IsNullOrWhiteSpace(filtro.FECHA_FIN))
+                {
+                    var formatos = new[] { "dd/MM/yyyy", "yyyy-MM-dd", "yyyy/MM/dd", "d/M/yyyy" };
+                    if ((DateTime.TryParseExact(filtro.FECHA_INICIO.Trim(), formatos, CultureInfo.InvariantCulture, DateTimeStyles.None, out var dtInicio) || DateTime.TryParse(filtro.FECHA_INICIO.Trim(), out dtInicio)) &&
+                        (DateTime.TryParseExact(filtro.FECHA_FIN.Trim(), formatos, CultureInfo.InvariantCulture, DateTimeStyles.None, out var dtFin) || DateTime.TryParse(filtro.FECHA_FIN.Trim(), out dtFin)))
+                    {
+                        int maxDias = codigoVendedorSap > 0 ? 90 : 180;
+                        if ((dtFin.Date - dtInicio.Date).TotalDays > maxDias)
+                        {
+                            return BadRequest(new
+                            {
+                                error = $"El rango de fechas no puede superar los {maxDias} días para la exportación de reportes."
+                            });
+                        }
+                    }
                 }
 
                 var resultados = await _puntoVenta.ListarVentas(filtro);

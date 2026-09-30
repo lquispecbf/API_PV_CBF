@@ -533,6 +533,148 @@ public class PuntoVenta : IPuntoVenta
 
         return (true, disponible, null);
     }
+
+    public async Task<(bool Valido, string? Mensaje)> ValidarPreciosYPromociones(VentaGuardarRequestDTO request)
+    {
+        if (request == null || request.DETALLE == null || request.DETALLE.Count == 0)
+            return (true, null);
+
+        var lineasAValidar = request.DETALLE
+            .Where(d => !string.IsNullOrWhiteSpace(d.ITEMCODE) && d.QUANTITY > 0)
+            .ToList();
+
+        if (lineasAValidar.Count == 0)
+            return (true, null);
+
+        int codigoListaPrecio = 0;
+        if (!string.IsNullOrWhiteSpace(request.PRICE_LIST) && int.TryParse(request.PRICE_LIST.Trim(), out int lp))
+        {
+            codigoListaPrecio = lp;
+        }
+        else
+        {
+            var firstPl = request.DETALLE.FirstOrDefault(d => !string.IsNullOrWhiteSpace(d.PRICE_LIST) && int.TryParse(d.PRICE_LIST.Trim(), out _));
+            if (firstPl != null && int.TryParse(firstPl.PRICE_LIST!.Trim(), out lp))
+            {
+                codigoListaPrecio = lp;
+            }
+        }
+
+        if (codigoListaPrecio <= 0)
+            return (true, null);
+
+        string codigoAlmacen = string.IsNullOrWhiteSpace(request.WHSCODE) ? "01" : request.WHSCODE.Trim();
+        string codigoCliente = string.IsNullOrWhiteSpace(request.CARDCODE) ? "" : request.CARDCODE.Trim();
+
+        var itemsRequest = lineasAValidar.Select(d => new ArticuloDetalleVentaItemRequestDTO
+        {
+            CodigoArticulo = d.ITEMCODE!.Trim().ToUpperInvariant(),
+            CodigoUmd = d.UOMENTRY
+        }).ToList();
+
+        var catalogo = await BuscarDetalleArticulosVentaBatch(itemsRequest, codigoListaPrecio, codigoAlmacen, codigoCliente);
+
+        var errores = new List<string>();
+
+        foreach (var d in lineasAValidar)
+        {
+            string cod = d.ITEMCODE!.Trim().ToUpperInvariant();
+            if (!catalogo.TryGetValue(cod, out var artDetalle) || artDetalle?.ARTICULO == null)
+            {
+                errores.Add($"El artículo '{d.ITEMNAME ?? cod}' no existe en la lista de precios seleccionada en SAP.");
+                continue;
+            }
+
+            decimal precioBase = artDetalle.ARTICULO.PRECIO;
+            var umds = artDetalle.UMDS ?? new List<UnidadMedidaArticuloSapDTO>();
+            var umd = umds.FirstOrDefault(u => u.CODIGO_UMD == d.UOMENTRY)
+                   ?? umds.FirstOrDefault(u => string.Equals(u.CODIGO, d.UMD_NOMBRE, StringComparison.OrdinalIgnoreCase))
+                   ?? umds.FirstOrDefault();
+
+            decimal factor = (umd != null && umd.FACTOR > 0) ? umd.FACTOR : 1m;
+            decimal precioNormal = precioBase * factor;
+
+            decimal precioEsperado = precioNormal;
+            decimal descuentoEsperado = 0;
+            string regaloEsperado = "NO";
+            decimal cantidad = d.QUANTITY;
+
+            var promos = artDetalle.PROMOS ?? new List<PromoArticuloSapDTO>();
+            var lineaBase = promos.FirstOrDefault(p => !string.IsNullOrWhiteSpace(p.PROMO_TYPE));
+
+            if (lineaBase != null)
+            {
+                switch (lineaBase.PROMO_TYPE)
+                {
+                    case "P":
+                        var promoP = promos.FirstOrDefault(p => p.PROMO_TYPE == "P" && p.CANTIDAD == 0 && p.PRECIO > 0 && p.DESCUENTO == 0);
+                        if (promoP != null)
+                        {
+                            precioEsperado = promoP.PRECIO;
+                        }
+                        break;
+                    case "Q":
+                        var promoQ = promos
+                            .Where(p => p.PROMO_TYPE == "Q" && p.CANTIDAD > 0 && p.PRECIO > 0 && p.DESCUENTO == 0 && cantidad >= p.CANTIDAD)
+                            .OrderByDescending(p => p.CANTIDAD)
+                            .FirstOrDefault();
+                        if (promoQ != null)
+                        {
+                            precioEsperado = promoQ.PRECIO;
+                        }
+                        break;
+                    case "D":
+                        var promoD = promos
+                            .Where(p => p.PROMO_TYPE == "D" && p.PRECIO == 0 && p.DESCUENTO > 0 && cantidad >= p.CANTIDAD)
+                            .OrderByDescending(p => p.CANTIDAD)
+                            .FirstOrDefault();
+                        if (promoD != null)
+                        {
+                            descuentoEsperado = promoD.DESCUENTO;
+                        }
+                        break;
+                    case "R":
+                        var promoR = promos
+                            .Where(p => p.PROMO_TYPE == "R" && p.PRECIO == 0 && p.DESCUENTO == 0 && cantidad >= p.CANTIDAD)
+                            .OrderByDescending(p => p.CANTIDAD)
+                            .FirstOrDefault();
+                        if (promoR != null)
+                        {
+                            regaloEsperado = "SI";
+                        }
+                        break;
+                }
+            }
+
+            decimal precioUnitarioBaseEsperado = factor > 0 ? (precioEsperado / factor) : precioEsperado;
+
+            bool precioValido = (Math.Abs(d.PRICE - precioUnitarioBaseEsperado) <= 0.05m)
+                             || (d.PRICE_UOM > 0 && Math.Abs(d.PRICE_UOM - precioEsperado) <= 0.05m)
+                             || (precioEsperado == 0 && d.PRICE == 0);
+
+            if (!precioValido)
+            {
+                errores.Add($"Precio no válido para '{d.ITEMNAME ?? cod}' (Enviado: S/ {d.PRICE:N2}, Oficial SAP: S/ {precioUnitarioBaseEsperado:N2}).");
+            }
+
+            if (Math.Abs(d.DSCT_PERCENT - descuentoEsperado) > 0.05m)
+            {
+                errores.Add($"Descuento no autorizado para '{d.ITEMNAME ?? cod}' (Enviado: {d.DSCT_PERCENT:N2}%, Oficial SAP: {descuentoEsperado:N2}%).");
+            }
+
+            if (regaloEsperado == "NO" && string.Equals(d.WMS_GIF, "SI", StringComparison.OrdinalIgnoreCase))
+            {
+                errores.Add($"La bonificación/regalo para '{d.ITEMNAME ?? cod}' no cumple con las cantidades mínimas requeridas por la promoción en SAP.");
+            }
+        }
+
+        if (errores.Count > 0)
+        {
+            return (false, string.Join(" | ", errores));
+        }
+
+        return (true, null);
+    }
     public async Task<List<ArticuloAutocompleteDTO>> BuscarArticulosAutocomplete(string? textoBusqueda, int codigoListaPrecio, string codigoAlmacen)
     {
         var commandText = _hana.BuildProcedureCall("CBF_SP_PV_BUSCAR_ARTICULOS_AUTOCOMPLETE", 3);
@@ -1681,7 +1823,8 @@ public class PuntoVenta : IPuntoVenta
         const string sql = @"
             SELECT TOP 1 SLPCODE 
             FROM T_SK_ODOCS WITH (NOLOCK)
-            WHERE (@DocEntry > 0 AND DOCENTRY = @DocEntry)
+            WHERE (@DocEntry > 0 AND @DocEntrySap > 0 AND DOCENTRY = @DocEntry AND DOCENTRY_SAP = @DocEntrySap)
+               OR (@DocEntry > 0 AND @DocEntrySap <= 0 AND DOCENTRY = @DocEntry)
                OR (@DocEntry <= 0 AND @DocEntrySap > 0 AND DOCENTRY_SAP = @DocEntrySap)";
 
         using var cmd = new SqlCommand(sql, con);
@@ -1689,10 +1832,33 @@ public class PuntoVenta : IPuntoVenta
         cmd.Parameters.AddWithValue("@DocEntrySap", docEntrySap);
 
         var val = await cmd.ExecuteScalarAsync();
-        if (val == null || val == DBNull.Value) return null;
-
-        if (int.TryParse(val.ToString(), out int slpCode))
+        if (val != null && val != DBNull.Value && int.TryParse(val.ToString(), out int slpCode))
+        {
             return slpCode;
+        }
+
+        // Fallback a SAP HANA si la orden solo tiene DocEntrySap y no está en la base local
+        if (docEntrySap > 0)
+        {
+            try
+            {
+                var commandText = "SELECT \"SlpCode\" FROM \"ORDR\" WHERE \"DocEntry\" = ? LIMIT 1";
+                var lista = await _hana.QueryListAsync<int>(
+                    commandText,
+                    reader => reader.IsDBNull(0) ? 0 : Convert.ToInt32(reader.GetValue(0)),
+                    CommandType.Text,
+                    _hana.CreateParameter("p1", docEntrySap)
+                );
+                if (lista != null && lista.Count > 0)
+                {
+                    return lista[0];
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ObtenerVendedorPorDocEntry] Fallback SAP HANA: {ex.Message}");
+            }
+        }
 
         return null;
     }
