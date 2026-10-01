@@ -1000,6 +1000,97 @@ namespace API.Controllers
                     }
                 }
 
+                // Validación de Productos Controlados según Dirección de Envío (OWASP A04 - Server Side Validation)
+                // Se aplica cuando no es guardado en borrador (DOCSTATUS != "E")
+                if (!string.Equals(request.DOCSTATUS, "E", StringComparison.OrdinalIgnoreCase))
+                {
+                    var itemcodesActivos = request.DETALLE
+                        .Where(d => d.QUANTITY > 0 && !string.IsNullOrWhiteSpace(d.ITEMCODE))
+                        .Select(d => d.ITEMCODE!.Trim().ToUpperInvariant())
+                        .Distinct()
+                        .ToList();
+
+                    if (itemcodesActivos.Count > 0 && !string.IsNullOrWhiteSpace(request.CARDCODE))
+                    {
+                        int codListaPrecio = 1;
+                        if (!string.IsNullOrWhiteSpace(request.PRICE_LIST) && int.TryParse(request.PRICE_LIST, out var parsedLp))
+                        {
+                            codListaPrecio = parsedLp;
+                        }
+
+                        var itemsBatchReq = itemcodesActivos.Select(c => new ArticuloDetalleVentaItemRequestDTO
+                        {
+                            CodigoArticulo = c,
+                            CodigoUmd = null
+                        }).ToList();
+
+                        var detalleArticulosMap = await _puntoVenta.BuscarDetalleArticulosVentaBatch(
+                            itemsBatchReq,
+                            codListaPrecio,
+                            request.WHSCODE ?? "",
+                            request.CARDCODE ?? ""
+                        );
+
+                        var direccionesCliente = await _puntoVenta.BuscarDireccionesCliente(request.CARDCODE);
+                        var dirEnvio = direccionesCliente.FirstOrDefault(d =>
+                            string.Equals(d.CODIGO_DIRECCION, request.DELIVERY_PLACE, StringComparison.OrdinalIgnoreCase) &&
+                            string.Equals(d.TIPO_DIRECCION, "S", StringComparison.OrdinalIgnoreCase))
+                            ?? direccionesCliente.FirstOrDefault(d =>
+                            string.Equals(d.CODIGO_DIRECCION, request.DELIVERY_PLACE, StringComparison.OrdinalIgnoreCase));
+
+                        var erroresControlados = new List<string>();
+
+                        foreach (var det in request.DETALLE.Where(d => d.QUANTITY > 0 && !string.IsNullOrWhiteSpace(d.ITEMCODE)))
+                        {
+                            var codeUpper = det.ITEMCODE!.Trim().ToUpperInvariant();
+                            if (detalleArticulosMap.TryGetValue(codeUpper, out var artInfo) && artInfo?.ARTICULO != null)
+                            {
+                                var tipo = (artInfo.ARTICULO.TIPO_CONTROLADO ?? "01").Trim();
+                                if (tipo != "01" && tipo != "1")
+                                {
+                                    bool permitido = false;
+                                    string tipoNombre = "Controlado";
+                                    if (tipo == "02" || tipo == "2")
+                                    {
+                                        tipoNombre = "Precursores";
+                                        permitido = dirEnvio != null && string.Equals(dirEnvio.U_CBF_PREC, "SI", StringComparison.OrdinalIgnoreCase);
+                                    }
+                                    else if (tipo == "03" || tipo == "3")
+                                    {
+                                        tipoNombre = "Psicotrópicos";
+                                        permitido = dirEnvio != null && string.Equals(dirEnvio.U_CBF_PSI, "SI", StringComparison.OrdinalIgnoreCase);
+                                    }
+                                    else if (tipo == "04" || tipo == "4")
+                                    {
+                                        tipoNombre = "Estupefacientes";
+                                        permitido = dirEnvio != null && string.Equals(dirEnvio.U_CBF_ESTU, "SI", StringComparison.OrdinalIgnoreCase);
+                                    }
+                                    else if (tipo == "05" || tipo == "5")
+                                    {
+                                        tipoNombre = "Psicotrópicos IV B";
+                                        permitido = dirEnvio != null && string.Equals(dirEnvio.U_CBF_PSI_IV, "SI", StringComparison.OrdinalIgnoreCase);
+                                    }
+
+                                    if (!permitido)
+                                    {
+                                        var desc = !string.IsNullOrWhiteSpace(det.ITEMNAME) ? det.ITEMNAME : (artInfo.ARTICULO.DESCRIPCION ?? det.ITEMCODE);
+                                        erroresControlados.Add($"\"{det.ITEMCODE} - {desc}\" ({tipoNombre})");
+                                    }
+                                }
+                            }
+                        }
+
+                        if (erroresControlados.Count > 0)
+                        {
+                            var nombreDir = !string.IsNullOrWhiteSpace(request.DELIVERY_PLACE) ? request.DELIVERY_PLACE : "(Sin dirección seleccionada)";
+                            return BadRequest(new
+                            {
+                                error = $"No se puede guardar la venta porque la dirección de envío \"{nombreDir}\" no está autorizada para comercializar los siguientes productos controlados: {string.Join(", ", erroresControlados.Distinct())}."
+                            });
+                        }
+                    }
+                }
+
                 var resultado = await _puntoVenta.GuardarVentaCompleta(request);
 
                 if (resultado.EXITO)

@@ -14,4 +14,9 @@ public class DireccionClienteSapDTO
     public string? CODIGO_POSTAL { get; set; }
     public string? PAIS { get; set; }
     public string? ES_PREDETERMINADA { get; set; }
+
+    public string U_CBF_PREC { get; set; } = "NO";
+    public string U_CBF_PSI { get; set; } = "NO";
+    public string U_CBF_ESTU { get; set; } = "NO";
+    public string U_CBF_PSI_IV { get; set; } = "NO";
 }

@@ -210,6 +210,12 @@ public class PuntoVenta : IPuntoVenta
         int ordPredeterminada = -1;
         try { ordPredeterminada = reader.GetOrdinal("ES_PREDETERMINADA"); } catch { }
 
+        int ordPrec = -1, ordPsi = -1, ordEstu = -1, ordPsiIv = -1;
+        try { ordPrec = reader.GetOrdinal("U_CBF_PREC"); } catch { }
+        try { ordPsi = reader.GetOrdinal("U_CBF_PSI"); } catch { }
+        try { ordEstu = reader.GetOrdinal("U_CBF_ESTU"); } catch { }
+        try { ordPsiIv = reader.GetOrdinal("U_CBF_PSI_IV"); } catch { }
+
         return new DireccionClienteSapDTO
         {
             CODIGO_CLIENTE = reader.IsDBNull(ordCliente) ? null : reader.GetString(ordCliente),
@@ -224,7 +230,11 @@ public class PuntoVenta : IPuntoVenta
             PAIS = reader.IsDBNull(ordPais) ? null : reader.GetString(ordPais),
             ES_PREDETERMINADA = (ordPredeterminada >= 0 && !reader.IsDBNull(ordPredeterminada))
                 ? reader.GetString(ordPredeterminada)
-                : "N"
+                : "N",
+            U_CBF_PREC = (ordPrec >= 0 && !reader.IsDBNull(ordPrec)) ? (reader.GetString(ordPrec) ?? "NO") : "NO",
+            U_CBF_PSI = (ordPsi >= 0 && !reader.IsDBNull(ordPsi)) ? (reader.GetString(ordPsi) ?? "NO") : "NO",
+            U_CBF_ESTU = (ordEstu >= 0 && !reader.IsDBNull(ordEstu)) ? (reader.GetString(ordEstu) ?? "NO") : "NO",
+            U_CBF_PSI_IV = (ordPsiIv >= 0 && !reader.IsDBNull(ordPsiIv)) ? (reader.GetString(ordPsiIv) ?? "NO") : "NO"
         };
     }
     public async Task<List<TipoEmbalajeSapDTO>> BuscarTiposEmbalaje()
@@ -692,11 +702,16 @@ public class PuntoVenta : IPuntoVenta
     {
         int ordCodigo = reader.GetOrdinal("CODIGO");
         int ordDescripcion = reader.GetOrdinal("DESCRIPCION");
+        int ordTipoControlado = -1;
+        try { ordTipoControlado = reader.GetOrdinal("TIPO_CONTROLADO"); } catch { }
 
         return new ArticuloAutocompleteDTO
         {
             CODIGO = reader.IsDBNull(ordCodigo) ? null : reader.GetString(ordCodigo),
-            DESCRIPCION = reader.IsDBNull(ordDescripcion) ? null : reader.GetString(ordDescripcion)
+            DESCRIPCION = reader.IsDBNull(ordDescripcion) ? null : reader.GetString(ordDescripcion),
+            TIPO_CONTROLADO = (ordTipoControlado >= 0 && !reader.IsDBNull(ordTipoControlado))
+                ? (reader.GetString(ordTipoControlado) ?? "01")
+                : "01"
         };
     }
     public async Task<List<ArticuloBusquedaSapDTO>> BuscarArticulosDescripcion(string? descripcion, string? codigo, string? laboratorio, string? principioActivo, int codigoListaPrecio, string codigoAlmacen, string? titularRs = null)
@@ -1079,6 +1094,8 @@ public class PuntoVenta : IPuntoVenta
         int ordIgvAfect = reader.GetOrdinal("IGV_AFECT");
         int ordUomentry = reader.GetOrdinal("UOMENTRY");
         int ordPriceBef = reader.GetOrdinal("PRICE_BEF");
+        int ordTipoControlado = -1;
+        try { ordTipoControlado = reader.GetOrdinal("TIPO_CONTROLADO"); } catch { }
 
         return new ArticuloBusquedaSapDTO
         {
@@ -1103,7 +1120,10 @@ public class PuntoVenta : IPuntoVenta
             CODEBARS = reader.IsDBNull(ordCodebars) ? null : reader.GetString(ordCodebars),
             IGV_AFECT = reader.IsDBNull(ordIgvAfect) ? null : reader.GetString(ordIgvAfect),
             UOMENTRY = reader.IsDBNull(ordUomentry) ? 0 : Convert.ToInt32(reader[ordUomentry]),
-            PRICE_BEF = reader.IsDBNull(ordPriceBef) ? 0 : Convert.ToDecimal(reader[ordPriceBef])
+            PRICE_BEF = reader.IsDBNull(ordPriceBef) ? 0 : Convert.ToDecimal(reader[ordPriceBef]),
+            TIPO_CONTROLADO = (ordTipoControlado >= 0 && !reader.IsDBNull(ordTipoControlado))
+                ? (reader.GetString(ordTipoControlado) ?? "01")
+                : "01"
         };
     }
     public async Task<List<UnidadMedidaArticuloSapDTO>> BuscarUmdArticulo(string codigoArticulo)
@@ -2386,7 +2406,8 @@ public class PuntoVenta : IPuntoVenta
             PRICE_LIST = TryGetString(reader, "PRICE_LIST"),
             WMS_GIF = reader.IsDBNull(ordWmsGif) ? null : reader.GetString(ordWmsGif),
             WMS_DSC = reader.IsDBNull(ordWmsDsc) ? 0 : reader.GetDecimal(ordWmsDsc),
-            FORSALE = reader.IsDBNull(ordForSale) ? 0 : reader.GetDecimal(ordForSale)
+            FORSALE = reader.IsDBNull(ordForSale) ? 0 : reader.GetDecimal(ordForSale),
+            TIPO_CONTROLADO = TryGetString(reader, "TIPO_CONTROLADO") ?? "01"
         };
     }
 

@@ -1,4 +1,4 @@
-﻿namespace BE.PuntoVenta;
+namespace BE.PuntoVenta;
 
 public class ArticuloBusquedaSapDTO
 {
@@ -45,4 +45,5 @@ public class ArticuloBusquedaSapDTO
     public int UOMENTRY { get; set; }
 
     public decimal PRICE_BEF { get; set; }
+    public string TIPO_CONTROLADO { get; set; } = "01";
 }

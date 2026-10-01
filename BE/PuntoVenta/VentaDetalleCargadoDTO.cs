@@ -22,5 +22,6 @@ public class VentaDetalleCargadoDTO
     public string? UMD_NOMBRE { get; set; }
     public decimal UMD_FACTOR { get; set; }
     public string? FECHA_VENCIMIENTO { get; set; }
+    public string? TIPO_CONTROLADO { get; set; } = "01";
     public List<VentaLoteCargadoDTO> LOTES { get; set; } = new();
 }

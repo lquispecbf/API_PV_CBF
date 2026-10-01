@@ -22,6 +22,7 @@ public class VentaDetalleDTO
     public string? PRICE_LIST { get; set; }
     public string? WMS_GIF { get; set; }
     public decimal WMS_DSC { get; set; }
+    public string? TIPO_CONTROLADO { get; set; } = "01";
 
     public List<VentaLoteDTO> LOTES { get; set; } = new();
 }
