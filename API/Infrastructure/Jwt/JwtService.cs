@@ -2,6 +2,8 @@ using BE;
 using BE.Seguridad;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using System;
+using System.Collections.Generic;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
@@ -18,6 +20,11 @@ namespace API.Infrastructure.Jwt
         }
 
         public string GenerarToken(BE_Usuario usuario, out DateTime expiration)
+        {
+            return GenerarToken(usuario, null, out expiration);
+        }
+
+        public string GenerarToken(BE_Usuario usuario, PermisosPuntoVentaDTO? permisosPv, out DateTime expiration)
         {
             var tokenHandler = new JwtSecurityTokenHandler();
             var key = Encoding.UTF8.GetBytes(_jwtSettings.SecretKey);
@@ -36,8 +43,22 @@ namespace API.Infrastructure.Jwt
                 new Claim("nombre_perfil", usuario.PERFIL ?? string.Empty),
                 new Claim("id_vendedor", (usuario.CODIGO_VENDEDOR_SAP ?? 0).ToString()),
                 new Claim("area", usuario.AREA ?? ""),
-                new Claim("departamento", usuario.DEPARTAMENTO ?? "")
+                new Claim("departamento", usuario.DEPARTAMENTO ?? ""),
+                new Claim("rol_pv", permisosPv?.CodigoRolPv ?? RolesPvConstantes.Vendedor),
+                new Claim(ClaimTypes.Role, permisosPv?.CodigoRolPv ?? RolesPvConstantes.Vendedor)
             };
+
+            // Inyectar claims de acciones autorizadas
+            if (permisosPv?.Acciones != null)
+            {
+                foreach (var accion in permisosPv.Acciones)
+                {
+                    if (!string.IsNullOrWhiteSpace(accion))
+                    {
+                        claims.Add(new Claim("pv_action", accion.Trim().ToUpperInvariant()));
+                    }
+                }
+            }
 
             var tokenDescriptor = new SecurityTokenDescriptor
             {

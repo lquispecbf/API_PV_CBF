@@ -93,15 +93,20 @@ builder.Services.AddScoped<ILogin, Login>();
 builder.Services.AddScoped<IUsuario, Usuario>();
 builder.Services.AddScoped<IMenu, Menu>();
 builder.Services.AddScoped<IPuntoVenta, PuntoVenta>();
+builder.Services.AddScoped<DA.Repositorio.Repositorio_Permisos.IPermisosPvRepositorio, DA.Repositorio.Repositorio_Permisos.PermisosPvRepositorio>();
 
 // Auditoría de Endpoints
 builder.Services.AddScoped<IAuditoria, Auditoria>();
 builder.Services.AddScoped<IEndpointAuditoria, EndpointAuditoria>();
 builder.Services.AddScoped<FiltroAuditoriaAttribute>();
 
+// Memoria Caché para Permisos y Rendimiento
+builder.Services.AddMemoryCache();
+
 // Capa de Servicios de Negocio (BL)
 builder.Services.AddScoped<IPuntoVentaService, PuntoVentaService>();
 builder.Services.AddScoped<PuntoVentaService>();
+builder.Services.AddScoped<IPermisosPvService, PermisosPvService>();
 
 // CORS para permitir peticiones desde MVC o SPA
 builder.Services.AddCors(options =>

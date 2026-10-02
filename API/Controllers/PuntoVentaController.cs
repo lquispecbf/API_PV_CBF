@@ -1,5 +1,6 @@
 using BE;
 using BE.PuntoVenta;
+using BE.Seguridad;
 using ClosedXML.Excel;
 using DA.Repositorio.Repositorio_Errores;
 using DA.Repositorio.Repositorio_PuntoVenta;
@@ -74,24 +75,12 @@ namespace API.Controllers
 
         private bool EsUsuarioMantenerSesion()
         {
-            var usuarioActual = ObtenerUsuarioActual().Trim().ToLower();
-            if (string.IsNullOrEmpty(usuarioActual)) return false;
-
-            var usuariosHabilitados = _configuration.GetSection("PuntoVenta_UsuariosMantenerSesion").Get<List<string>>() 
-                ?? new List<string>();
-
-            return usuariosHabilitados.Any(u => u.Trim().Equals(usuarioActual, StringComparison.OrdinalIgnoreCase));
+            return User.Claims.Any(c => c.Type == "pv_action" && c.Value == AccionesPvConstantes.VentaMantenerSesion);
         }
 
         private bool EsUsuarioAutorizadoAnularEnviadoWms()
         {
-            var usuarioActual = ObtenerUsuarioActual().Trim().ToLower();
-            if (string.IsNullOrEmpty(usuarioActual)) return false;
-
-            var usuariosHabilitados = _configuration.GetSection("PuntoVenta_UsuariosAnularEnviadoWMS").Get<List<string>>() 
-                ?? new List<string>();
-
-            return usuariosHabilitados.Any(u => u.Trim().Equals(usuarioActual, StringComparison.OrdinalIgnoreCase));
+            return User.Claims.Any(c => c.Type == "pv_action" && c.Value == AccionesPvConstantes.VentaAnularEnviadoWms);
         }
 
         [HttpGet]
@@ -132,6 +121,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:StockPorAlmacen")]
+        [RequiereAccionPv(AccionesPvConstantes.StockAlmacenVer)]
         [HttpPost]
         public async Task<IActionResult> Buscar_StockPorAlmacen([FromBody] StockPorAlmacenFiltroDTO filtro)
         {
@@ -148,6 +138,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:StockPorAlmacen")]
+        [RequiereAccionPv(AccionesPvConstantes.StockAlmacenExportar)]
         [HttpPost]
         public async Task<IActionResult> ExportarExcel_StockPorAlmacen([FromBody] StockPorAlmacenFiltroDTO filtro)
         {
@@ -826,6 +817,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [RequiereAccionPv(AccionesPvConstantes.VentaCrear, AccionesPvConstantes.VentaGuardarBorrador)]
         [HttpPost]
         public async Task<IActionResult> Guardar_Venta([FromBody] VentaGuardarRequestDTO request)
         {
@@ -858,6 +850,22 @@ namespace API.Controllers
                             rawPreview
                         }
                     });
+                }
+
+                var esBorrador = (request.DOCSTATUS ?? "").Trim().ToUpper() == "E";
+                if (esBorrador)
+                {
+                    if (!User.Claims.Any(c => c.Type == "pv_action" && (c.Value == AccionesPvConstantes.VentaGuardarBorrador || c.Value == AccionesPvConstantes.VentaCrear)))
+                    {
+                        return StatusCode(403, new { error = "No cuenta con permisos para guardar borradores de venta." });
+                    }
+                }
+                else
+                {
+                    if (!User.Claims.Any(c => c.Type == "pv_action" && c.Value == AccionesPvConstantes.VentaCrear))
+                    {
+                        return StatusCode(403, new { error = "No cuenta con permisos para emitir y registrar ventas." });
+                    }
                 }
 
                 int codigoVendedorSap = ObtenerCodigoVendedorSap();
@@ -903,6 +911,17 @@ namespace API.Controllers
                 }
 
                 var lugarEntrega = (request.DELIVERY_POINT ?? "").Trim().ToUpperInvariant();
+                var payForm = (request.PAYFORM ?? "").Trim().ToUpperInvariant();
+
+                // Validación Comercial: Si el lugar de entrega es AGENCIA, la forma de pago NO puede ser CONTRA ENTREGA
+                if (lugarEntrega == "AGENCIA" && (payForm.Contains("CONTRA ENTREGA") || payForm.Contains("CONTRAENTREGA")))
+                {
+                    return BadRequest(new
+                    {
+                        error = "Incompatibilidad comercial: Cuando el Lugar de Entrega es AGENCIA, no se permite la forma de pago CONTRA ENTREGA. Por favor seleccione otra condición de pago o cambie el lugar de entrega."
+                    });
+                }
+
                 var lugaresRestringidos = new[] { "AGENCIA", "CENTRO", "DOMICILIO" };
                 int horaEntrega = ObtenerHoraMilitar(request.DELIVERY_TIME);
 
@@ -1110,6 +1129,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [RequiereAccionPv(AccionesPvConstantes.VentaExportarExcel)]
         [HttpPost]
         public async Task<IActionResult> ExportarExcel_Ventas([FromBody] VentaBusquedaFiltroDTO filtro)
         {
@@ -1200,6 +1220,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [RequiereAccionPv(AccionesPvConstantes.VentaVer)]
         [HttpPost]
         public async Task<IActionResult> Buscar_Ventas([FromBody] VentaBusquedaFiltroDTO filtro)
         {
@@ -1412,6 +1433,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [RequiereAccionPv(AccionesPvConstantes.VentaAnular)]
         [HttpPost]
         public async Task<IActionResult> Anular_Venta([FromBody] CargarVentaRequestDTO data)
         {
@@ -1441,6 +1463,8 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [RequiereAccionPv(AccionesPvConstantes.VentaCrear)]
+        [RequiereAccionPv(AccionesPvConstantes.VentaReabrir)]
         [HttpPost]
         public async Task<IActionResult> Reabrir_Venta([FromBody] ReabrirVentaRequestDTO data)
         {
@@ -1470,6 +1494,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [RequiereAccionPv(AccionesPvConstantes.VentaCrear)]
         [HttpPost]
         public async Task<IActionResult> Trasladar_Venta([FromBody] CargarVentaRequestDTO data)
         {
@@ -1496,6 +1521,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [RequiereAccionPv(AccionesPvConstantes.VentaEnviarWms)]
         [HttpPost]
         public async Task<IActionResult> EnviarWMS_Venta([FromBody] CargarVentaRequestDTO data)
         {
@@ -1544,6 +1570,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [RequiereAccionPv(AccionesPvConstantes.VentaImprimir)]
         [HttpGet]
         public async Task<IActionResult> Imprimir_Venta([FromQuery] VentaReporteParamDTO dto)
         {
@@ -1619,6 +1646,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [RequiereAccionPv(AccionesPvConstantes.VentaImprimir)]
         [HttpGet]
         public async Task<IActionResult> Ticket_Venta([FromQuery] VentaReporteParamDTO dto)
         {
@@ -1692,6 +1720,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [RequiereAccionPv(AccionesPvConstantes.VentaImprimir)]
         [HttpGet]
         public async Task<IActionResult> PreliminarSap_Venta([FromQuery] VentaReporteParamDTO dto)
         {
@@ -1765,6 +1794,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [RequiereAccionPv(AccionesPvConstantes.VentaImprimir)]
         [HttpGet]
         public async Task<IActionResult> PreliminarPv_Venta([FromQuery] VentaReporteParamDTO dto)
         {
@@ -1845,6 +1875,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:ClienteBloqueado")]
+        [RequiereAccionPv(AccionesPvConstantes.ClienteBloqueadoVer)]
         [HttpPost]
         public async Task<IActionResult> Buscar_ClientesBloqueados([FromBody] ClienteBloqueadoFiltroDTO filtro)
         {
@@ -1885,6 +1916,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:ClienteBloqueado")]
+        [RequiereAccionPv(AccionesPvConstantes.ClienteBloqueadoVer)]
         [HttpPost]
         public async Task<IActionResult> Obtener_ClienteBloqueado([FromBody] ClienteBloqueadoIdDTO dto)
         {
@@ -1903,6 +1935,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:ClienteBloqueado")]
+        [RequiereAccionPv(AccionesPvConstantes.ClienteBloqueadoGestionar)]
         [HttpPost]
         public async Task<IActionResult> Insertar_ClienteBloqueado([FromBody] ClienteBloqueadoGuardarDTO dto)
         {
@@ -1933,6 +1966,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:ClienteBloqueado")]
+        [RequiereAccionPv(AccionesPvConstantes.ClienteBloqueadoGestionar)]
         [HttpPost]
         public async Task<IActionResult> Actualizar_ClienteBloqueado([FromBody] ClienteBloqueadoGuardarDTO dto)
         {
@@ -1958,6 +1992,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:ClienteBloqueado")]
+        [RequiereAccionPv(AccionesPvConstantes.ClienteBloqueadoGestionar)]
         [HttpPost]
         public async Task<IActionResult> Eliminar_ClienteBloqueado([FromBody] ClienteBloqueadoIdDTO dto)
         {
@@ -2024,6 +2059,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:ClienteBloqueado")]
+        [RequiereAccionPv(AccionesPvConstantes.ClienteBloqueadoVer)]
         [HttpPost]
         public async Task<IActionResult> Exportar_ClientesBloqueados([FromBody] ClienteBloqueadoFiltroDTO filtro)
         {
@@ -2041,6 +2077,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:ClienteBloqueado")]
+        [RequiereAccionPv(AccionesPvConstantes.ClienteBloqueadoGestionar)]
         [HttpPost]
         public async Task<IActionResult> Importar_ClientesBloqueados([FromBody] List<ClienteBloqueadoImportarDTO> registros)
         {
@@ -2206,6 +2243,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:ArticuloFraccionado")]
+        [RequiereAccionPv(AccionesPvConstantes.ArticuloFraccionadoVer)]
         [HttpPost]
         public async Task<IActionResult> Buscar_ArticulosFraccionados([FromBody] ArticuloFraccionadoFiltroDTO filtro)
         {
@@ -2245,6 +2283,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:ArticuloFraccionado")]
+        [RequiereAccionPv(AccionesPvConstantes.ArticuloFraccionadoVer)]
         [HttpPost]
         public async Task<IActionResult> Obtener_ArticuloFraccionado([FromBody] ArticuloFraccionadoIdDTO dto)
         {
@@ -2263,6 +2302,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:ArticuloFraccionado")]
+        [RequiereAccionPv(AccionesPvConstantes.ArticuloFraccionadoGestionar)]
         [HttpPost]
         public async Task<IActionResult> Insertar_ArticuloFraccionado([FromBody] ArticuloFraccionadoGuardarDTO dto)
         {
@@ -2330,6 +2370,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:ArticuloFraccionado")]
+        [RequiereAccionPv(AccionesPvConstantes.ArticuloFraccionadoGestionar)]
         [HttpPost]
         public async Task<IActionResult> Actualizar_ArticuloFraccionado([FromBody] ArticuloFraccionadoGuardarDTO dto)
         {
@@ -2399,6 +2440,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:ArticuloFraccionado")]
+        [RequiereAccionPv(AccionesPvConstantes.ArticuloFraccionadoGestionar)]
         [HttpPost]
         public async Task<IActionResult> Eliminar_ArticuloFraccionado([FromBody] ArticuloFraccionadoIdDTO dto)
         {
@@ -2424,6 +2466,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:ArticuloFraccionado")]
+        [RequiereAccionPv(AccionesPvConstantes.ArticuloFraccionadoGestionar)]
         [HttpPost]
         public async Task<IActionResult> EliminarTodos_ArticulosFraccionados()
         {
@@ -2465,6 +2508,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:ArticuloFraccionado")]
+        [RequiereAccionPv(AccionesPvConstantes.ArticuloFraccionadoGestionar, AccionesPvConstantes.ArticuloFraccionadoVer)]
         [HttpGet]
         public async Task<IActionResult> Buscar_ArticuloSap(string? criterioBusqueda)
         {
@@ -2488,6 +2532,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:ArticuloFraccionado")]
+        [RequiereAccionPv(AccionesPvConstantes.ArticuloFraccionadoVer)]
         [HttpPost]
         public async Task<IActionResult> Exportar_ArticulosFraccionados([FromBody] ArticuloFraccionadoFiltroDTO filtro)
         {
@@ -2505,6 +2550,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:ArticuloFraccionado")]
+        [RequiereAccionPv(AccionesPvConstantes.ArticuloFraccionadoGestionar)]
         [HttpPost]
         public async Task<IActionResult> Importar_ArticulosFraccionados([FromBody] List<ArticuloFraccionadoImportarDTO> registros)
         {
@@ -2814,23 +2860,20 @@ namespace API.Controllers
 
         private string? ObtenerRolCondicionPagoUsuario()
         {
-            var usuarioActual = ObtenerUsuarioActual().Trim();
-            if (string.IsNullOrEmpty(usuarioActual)) return null;
-
-            var dictPermisos = _configuration.GetSection("PuntoVenta_PermisoModificarCondicionPago")
-                .Get<Dictionary<string, string>>() ?? new(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var kv in dictPermisos)
+            if (User.Claims.Any(c => c.Type == "pv_action" && c.Value == AccionesPvConstantes.VentaModificarCondPagoCobranza))
             {
-                if (kv.Key.Trim().Equals(usuarioActual, StringComparison.OrdinalIgnoreCase))
-                {
-                    return kv.Value.Trim().ToUpperInvariant(); // "VENTA" o "COBRANZA"
-                }
+                return "COBRANZA";
+            }
+
+            if (User.Claims.Any(c => c.Type == "pv_action" && c.Value == AccionesPvConstantes.VentaModificarCondPago))
+            {
+                return "VENTA";
             }
 
             return null;
         }
 
+        [RequiereAccionPv(AccionesPvConstantes.VentaModificarCondPago, AccionesPvConstantes.VentaModificarCondPagoCobranza)]
         [HttpGet]
         public async Task<IActionResult> ObtenerDatosModificarCondicionPago(int docEntry, int docEntrySap)
         {
@@ -2881,6 +2924,14 @@ namespace API.Controllers
                     }
                 }
 
+                // Obtener lugar de entrega de la orden local
+                string lugarEntregaOrden = "";
+                if (docEntry > 0)
+                {
+                    var ventaLocal = await _puntoVenta.VerVenta(docEntry);
+                    lugarEntregaOrden = (ventaLocal?.DELIVERY_POINT ?? "").Trim().ToUpperInvariant();
+                }
+
                 var todasFormasPago = await _puntoVenta.BuscarFormasPago(null);
                 var listaFiltrada = new List<FormaPagoSapDTO>();
                 string condActual = (ordenSap.PymntGroup ?? "").ToUpperInvariant();
@@ -2926,6 +2977,17 @@ namespace API.Controllers
                             }
                         }
                     }
+
+                    // Regla Comercial: Si el lugar de entrega es AGENCIA, no se permite ninguna opción CONTRA ENTREGA (salvo autorización de Cobranza)
+                    if (rol != "COBRANZA" && lugarEntregaOrden == "AGENCIA")
+                    {
+                        listaFiltrada = listaFiltrada
+                            .Where(fp => {
+                                var nom = (fp.NOMBRE ?? "").Trim().ToUpperInvariant();
+                                return !nom.Contains("CONTRA ENTREGA") && !nom.Contains("CONTRAENTREGA");
+                            })
+                            .ToList();
+                    }
                 }
 
                 var historial = await _puntoVenta.ListarHistorialCondicionPago(docEntry, docEntrySap);
@@ -2956,6 +3018,7 @@ namespace API.Controllers
             }
         }
 
+        [RequiereAccionPv(AccionesPvConstantes.VentaModificarCondPago, AccionesPvConstantes.VentaModificarCondPagoCobranza)]
         [HttpPost]
         public async Task<IActionResult> ActualizarCondicionPago([FromBody] ActualizarCondicionPagoRequestDTO request)
         {
@@ -3013,6 +3076,14 @@ namespace API.Controllers
                 return Ok(new { success = false, message = "La orden en SAP ya tiene configurada la condición de pago seleccionada." });
             }
 
+            // Obtener lugar de entrega de la orden local
+            string lugarEntregaOrden = "";
+            if (request.DocEntry > 0)
+            {
+                var ventaLocal = await _puntoVenta.VerVenta(request.DocEntry);
+                lugarEntregaOrden = (ventaLocal?.DELIVERY_POINT ?? "").Trim().ToUpperInvariant();
+            }
+
             // Obtener nombre de la nueva condición de pago si no viene en el request
             string condicionNuevoNombre = request.CondicionPagoNuevoNombre?.Trim() ?? "";
             if (string.IsNullOrWhiteSpace(condicionNuevoNombre))
@@ -3020,6 +3091,13 @@ namespace API.Controllers
                 var formasPago = await _puntoVenta.BuscarFormasPago(null);
                 var fpEncontrada = formasPago?.FirstOrDefault(x => x.CODIGO == request.NuevoGroupNum);
                 condicionNuevoNombre = fpEncontrada?.NOMBRE?.Trim() ?? $"GroupNum: {request.NuevoGroupNum}";
+            }
+
+            // Regla Comercial: Si el lugar de entrega es AGENCIA, no se permite cambiar a CONTRA ENTREGA (salvo autorización de Cobranza)
+            var condNuevoUpper = condicionNuevoNombre.ToUpperInvariant();
+            if (rol != "COBRANZA" && lugarEntregaOrden == "AGENCIA" && (condNuevoUpper.Contains("CONTRA ENTREGA") || condNuevoUpper.Contains("CONTRAENTREGA")))
+            {
+                return Ok(new { success = false, message = "Incompatibilidad comercial: Cuando el Lugar de Entrega es AGENCIA, no se permite cambiar a la condición de pago CONTRA ENTREGA." });
             }
 
             var usuarioActual = string.IsNullOrWhiteSpace(ObtenerUsuarioActual()) ? "SISTEMA" : ObtenerUsuarioActual().Trim();

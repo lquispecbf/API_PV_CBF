@@ -22,6 +22,7 @@ namespace API.Controllers
         private readonly IMenu _menu;
         private readonly IJwtService _jwtService;
         private readonly IConfiguration _configuration;
+        private readonly BL.Servicios.IPermisosPvService _permisosPvService;
 
         public AuthController(
             ILogin login,
@@ -29,7 +30,8 @@ namespace API.Controllers
             IUsuario usuario,
             IMenu menu,
             IJwtService jwtService,
-            IConfiguration configuration)
+            IConfiguration configuration,
+            BL.Servicios.IPermisosPvService permisosPvService)
         {
             _login = login;
             _errores = errores;
@@ -37,6 +39,7 @@ namespace API.Controllers
             _menu = menu;
             _jwtService = jwtService;
             _configuration = configuration;
+            _permisosPvService = permisosPvService;
         }
 
         private static bool ParsearFechaVencimiento(string? fechaTexto, out DateTime fecha)
@@ -158,32 +161,56 @@ namespace API.Controllers
                 int diasRestantes = Dias_Restantes_Clave(usuario);
                 bool proximoVencer = !debeCambiar && diasRestantes <= 5;
 
-                var usuariosMantener = _configuration.GetSection("PuntoVenta_UsuariosMantenerSesion").Get<List<string>>() ?? new List<string>();
-                bool mantenerSesion = usuariosMantener.Any(u => u.Trim().Equals(usuario.USUARIO?.Trim(), StringComparison.OrdinalIgnoreCase));
-
-                var usuariosAnularWms = _configuration.GetSection("PuntoVenta_UsuariosAnularEnviadoWMS").Get<List<string>>() ?? new List<string>();
-                bool puedeAnularWms = usuariosAnularWms.Any(u => u.Trim().Equals(usuario.USUARIO?.Trim(), StringComparison.OrdinalIgnoreCase));
-
-                var permisosCondicionPago = _configuration.GetSection("PuntoVenta_PermisoModificarCondicionPago").Get<Dictionary<string, string>>() ?? new Dictionary<string, string>();
-                string? rolCondicionPago = null;
-                foreach (var kv in permisosCondicionPago)
-                {
-                    if (kv.Key.Trim().Equals(usuario.USUARIO?.Trim(), StringComparison.OrdinalIgnoreCase))
-                    {
-                        rolCondicionPago = kv.Value.Trim().ToUpperInvariant();
-                        break;
-                    }
-                }
-
                 usuario.FORZAR_CAMBIO_CLAVE = debeCambiar ? "1" : "0";
                 usuario.DIAS_RESTANTES_CLAVE = diasRestantes;
                 usuario.PROXIMO_VENCER = proximoVencer ? "1" : "0";
 
-                // Obtener permisos de menú de Punto de Venta
-                var permisos = await _menu.Listar_Permisos_PuntoVenta(new BE_Usuario { ID = usuario.ID });
+                // Gatekeeper de Autenticación: Validar que el usuario cuente con al menos un menú activo en el ecosistema PVD
+                var menusUsuario = await _menu.Mostrar_Menu(new BE_Usuario { ID = usuario.ID });
 
-                // Generar Token JWT
-                string token = _jwtService.GenerarToken(usuario, out DateTime expiration);
+                var menusValidosPvd = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    "menu_venta",
+                    "menu_punto_venta_clientes_bloqueados",
+                    "menu_punto_venta_articulos_fraccionados",
+                    "menu_punto_venta_stock_por_almacen",
+                    "menu_punto_venta_permisos"
+                };
+
+                var menusPvdUsuario = menusUsuario?
+                    .Where(m => !string.IsNullOrWhiteSpace(m.DESCRIPCION_MENU_SYS) && menusValidosPvd.Contains(m.DESCRIPCION_MENU_SYS.Trim()))
+                    .Select(m => m.DESCRIPCION_MENU_SYS.Trim().ToLowerInvariant())
+                    .ToList() ?? new List<string>();
+
+                if (menusPvdUsuario.Count == 0)
+                {
+                    return Ok(new
+                    {
+                        Estado = false,
+                        Mensaje = "Acceso Denegado: Su usuario no cuenta con autorización para acceder al Sistema de Punto de Venta. Comuníquese con el Administrador o T.I.",
+                        Usuario = new List<BE_Usuario>()
+                    });
+                }
+
+                // Determinar ruta inicial recomendada según los menús autorizados del usuario
+                string urlInicial = "/PuntoVenta/Venta";
+                if (!menusPvdUsuario.Contains("menu_venta"))
+                {
+                    if (menusPvdUsuario.Contains("menu_punto_venta_permisos"))
+                        urlInicial = "/Permisos/Index";
+                    else if (menusPvdUsuario.Contains("menu_punto_venta_clientes_bloqueados"))
+                        urlInicial = "/PuntoVenta/ClienteBloqueado";
+                    else if (menusPvdUsuario.Contains("menu_punto_venta_articulos_fraccionados"))
+                        urlInicial = "/PuntoVenta/ArticuloFraccionado";
+                    else if (menusPvdUsuario.Contains("menu_punto_venta_stock_por_almacen"))
+                        urlInicial = "/PuntoVenta/StockPorAlmacen";
+                }
+
+                // Obtener permisos y Rol PVD desacoplados
+                var permisosPv = await _permisosPvService.ObtenerPermisosUsuarioAsync(usuario.ID, usuario.USUARIO);
+
+                // Generar Token JWT con claims de Rol PVD y Acciones
+                string token = _jwtService.GenerarToken(usuario, permisosPv, out DateTime expiration);
 
                 return Ok(new
                 {
@@ -192,10 +219,12 @@ namespace API.Controllers
                     Token = token,
                     Expiration = expiration,
                     Usuario = lista,
-                    Permisos = permisos,
-                    MantenerSesion = mantenerSesion,
-                    PuedeAnularEnviadoWms = puedeAnularWms,
-                    RolCondicionPago = rolCondicionPago
+                    MenusPvd = menusPvdUsuario,
+                    UrlInicial = urlInicial,
+                    PermisosPv = permisosPv,
+                    MantenerSesion = permisosPv.MantenerSesion,
+                    PuedeAnularEnviadoWms = permisosPv.PuedeAnularEnviadoWms,
+                    RolCondicionPago = permisosPv.PuedeModificarCondicionPago ? "SUPERVISOR" : null
                 });
             }
             catch (Exception ex)
@@ -311,6 +340,55 @@ namespace API.Controllers
             {
                 await _errores.Insertar_Exception(ex);
                 return Ok(new List<BE_Usuario>());
+            }
+        }
+
+        [HttpGet("validar-permiso")]
+        [Authorize]
+        public async Task<IActionResult> ValidarPermiso([FromQuery] string? controller, [FromQuery] string? action)
+        {
+            try
+            {
+                var idClaim = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("id_usuario");
+                if (!int.TryParse(idClaim, out int idUsuario))
+                {
+                    return Unauthorized(new { tienePermiso = false });
+                }
+
+                if (string.IsNullOrWhiteSpace(controller) || string.IsNullOrWhiteSpace(action))
+                {
+                    return BadRequest(new { tienePermiso = false, error = "Controller y Action son requeridos." });
+                }
+
+                bool tienePermiso = await _menu.Validar_Permiso_Usuario_Accion(idUsuario, controller, action);
+                return Ok(new { tienePermiso });
+            }
+            catch (Exception ex)
+            {
+                await _errores.Insertar_Exception(ex);
+                return StatusCode(500, new { tienePermiso = false, error = ex.Message });
+            }
+        }
+
+        [HttpGet("mis-permisos-pv")]
+        [Authorize]
+        public async Task<IActionResult> MisPermisosPv()
+        {
+            try
+            {
+                var idClaim = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("id_usuario");
+                if (!int.TryParse(idClaim, out int idUsuario) || idUsuario <= 0)
+                {
+                    return Unauthorized(new { error = "No autenticado." });
+                }
+
+                var permisos = await _permisosPvService.ObtenerPermisosUsuarioAsync(idUsuario);
+                return Ok(permisos);
+            }
+            catch (Exception ex)
+            {
+                await _errores.Insertar_Exception(ex);
+                return StatusCode(500, new { error = "Error al obtener permisos de usuario: " + ex.Message });
             }
         }
 
