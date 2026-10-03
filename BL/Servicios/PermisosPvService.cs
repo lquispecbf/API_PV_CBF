@@ -45,15 +45,8 @@ namespace BL.Servicios
 
         public async Task<PermisosPuntoVentaDTO> ObtenerPermisosUsuarioAsync(int idUsuario, string? loginUsuario = null)
         {
-            string cacheKey = $"PV_PERMISOS_{idUsuario}";
-            if (_cache.TryGetValue(cacheKey, out PermisosPuntoVentaDTO? cached) && cached != null)
-            {
-                return cached;
-            }
-
-            var permisos = await _repositorio.ObtenerPermisosUsuario(idUsuario);
-            _cache.Set(cacheKey, permisos, TimeSpan.FromMinutes(5));
-            return permisos;
+            // Consulta directa a base de datos para sincronización en tiempo real con la Intranet y PVD
+            return await _repositorio.ObtenerPermisosUsuario(idUsuario);
         }
 
         public async Task<ConfiguracionUsuarioMatrizResponseDTO?> ObtenerMatrizConfiguracionAsync(int idUsuario)
