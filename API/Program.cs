@@ -107,6 +107,31 @@ builder.Services.AddMemoryCache();
 builder.Services.AddScoped<IPuntoVentaService, PuntoVentaService>();
 builder.Services.AddScoped<PuntoVentaService>();
 builder.Services.AddScoped<IPermisosPvService, PermisosPvService>();
+builder.Services.AddSingleton<IDigemidService, DigemidService>();
+
+// Cliente HTTP persistente para DIGEMID con reutilización de conexiones y headers de navegador real
+builder.Services.AddHttpClient(DigemidService.HttpClientName, client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(25);
+    client.DefaultRequestHeaders.Clear();
+    client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36");
+    client.DefaultRequestHeaders.Add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8");
+    client.DefaultRequestHeaders.Add("Accept-Language", "es-419,es;q=0.9,en;q=0.8");
+    client.DefaultRequestHeaders.Add("Referer", "https://serviciosweb-digemid.minsa.gob.pe/Consultas/Establecimientos");
+    client.DefaultRequestHeaders.Add("Sec-Fetch-Dest", "empty");
+    client.DefaultRequestHeaders.Add("Sec-Fetch-Mode", "cors");
+    client.DefaultRequestHeaders.Add("Sec-Fetch-Site", "same-origin");
+    client.DefaultRequestHeaders.Add("X-Requested-With", "XMLHttpRequest");
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    PooledConnectionLifetime = TimeSpan.FromMinutes(15),
+    PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
+    AutomaticDecompression = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate,
+    SslOptions = new System.Net.Security.SslClientAuthenticationOptions
+    {
+        RemoteCertificateValidationCallback = (sender, cert, chain, sslPolicyErrors) => true
+    }
+});
 
 // CORS para permitir peticiones desde MVC o SPA
 builder.Services.AddCors(options =>

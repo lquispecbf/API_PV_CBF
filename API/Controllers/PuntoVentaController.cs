@@ -26,6 +26,7 @@ namespace API.Controllers
         private readonly IErrores _errores;
         private readonly IConfiguration _configuration;
         private readonly IWebHostEnvironment _env;
+        private readonly BL.Servicios.IDigemidService _digemidService;
         private readonly string? _rutaCrystal_API_PV;
         private readonly string? _rutaCrystal_PDF;
 
@@ -33,12 +34,14 @@ namespace API.Controllers
             IErrores errores,
             IPuntoVenta puntoVenta,
             IConfiguration configuration,
-            IWebHostEnvironment env)
+            IWebHostEnvironment env,
+            BL.Servicios.IDigemidService digemidService)
         {
             _errores = errores;
             _puntoVenta = puntoVenta;
             _configuration = configuration;
             _env = env;
+            _digemidService = digemidService;
             _rutaCrystal_API_PV = configuration["RutaCrystal_API_PV"];
             _rutaCrystal_PDF = configuration["RutaCrystal_PDF"];
         }
@@ -3116,6 +3119,26 @@ namespace API.Controllers
 
             return Ok(resultado);
         }
+
+        #region Scraping y Consulta Oficial DIGEMID
+
+        [HttpGet]
+        public async Task<IActionResult> ConsultarDigemid([FromQuery] string ruc)
+        {
+            var resultado = await _digemidService.ConsultarEstablecimientosPorRucAsync(ruc);
+            if (!resultado.Success && !string.IsNullOrWhiteSpace(resultado.Error))
+            {
+                // Si el RUC es inválido, devolver 400; en otros casos devolver Ok con Success=false para que el frontend maneje la alerta
+                if (resultado.Error.Contains("11 dígitos"))
+                {
+                    return BadRequest(resultado);
+                }
+            }
+
+            return Ok(resultado);
+        }
+
+        #endregion
 
         #endregion
     }

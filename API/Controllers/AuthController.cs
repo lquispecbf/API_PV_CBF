@@ -319,6 +319,54 @@ namespace API.Controllers
             });
         }
 
+        [HttpPost("renovar-token-sesion")]
+        [AllowAnonymous]
+        public async Task<IActionResult> RenovarTokenSesion([FromBody] RenovarTokenSesionRequestDTO request)
+        {
+            try
+            {
+                if (request == null || request.IdUsuario <= 0 || string.IsNullOrWhiteSpace(request.Usuario))
+                {
+                    return BadRequest(new RenovarTokenSesionResponseDTO
+                    {
+                        Success = false,
+                        Mensaje = "Datos de sesión insuficientes."
+                    });
+                }
+
+                var lista = await _usuario.Obtener_Usuarios(new BE_Usuario { ID = request.IdUsuario });
+                var usuario = lista?.FirstOrDefault();
+                if (usuario == null || !string.Equals(usuario.USUARIO?.Trim(), request.Usuario.Trim(), StringComparison.OrdinalIgnoreCase))
+                {
+                    return Unauthorized(new RenovarTokenSesionResponseDTO
+                    {
+                        Success = false,
+                        Mensaje = "Usuario no válido o inactivo."
+                    });
+                }
+
+                var permisosPv = await _permisosPvService.ObtenerPermisosUsuarioAsync(request.IdUsuario, usuario.USUARIO);
+                string token = _jwtService.GenerarToken(usuario, permisosPv, out DateTime expiration);
+
+                return Ok(new RenovarTokenSesionResponseDTO
+                {
+                    Success = true,
+                    Token = token,
+                    Expiration = expiration,
+                    Mensaje = "Token renovado exitosamente."
+                });
+            }
+            catch (Exception ex)
+            {
+                await _errores.Insertar_Exception(ex);
+                return StatusCode(500, new RenovarTokenSesionResponseDTO
+                {
+                    Success = false,
+                    Mensaje = "Error al renovar token: " + ex.Message
+                });
+            }
+        }
+
         [HttpPost("mostrar-menu")]
         [HttpPost("Mostrar_Menu")]
         [Authorize]
