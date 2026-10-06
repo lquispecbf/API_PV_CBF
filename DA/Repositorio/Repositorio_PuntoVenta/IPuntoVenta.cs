@@ -48,6 +48,7 @@ public interface IPuntoVenta
     Task<DataTable?> ObtenerReportePreliminarSap(int docEntrySap, int docEntryOwtr);
     Task<DataTable?> ObtenerReportePreliminarPv(int docEntry);
     Task<List<string>> ListarTitularesRs();
+    Task<List<ListaPrecioClienteItemDTO>> ObtenerListaPreciosClienteAsync(string? itemCode = null);
 
     // Clientes Bloqueados
     Task<List<ClienteBloqueadoDTO>> BuscarClientesBloqueados(ClienteBloqueadoFiltroDTO filtro);

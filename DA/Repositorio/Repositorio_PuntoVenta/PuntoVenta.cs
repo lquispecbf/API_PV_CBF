@@ -3445,4 +3445,45 @@ public class PuntoVenta : IPuntoVenta
 
         return await cmd.ExecuteNonQueryAsync();
     }
+
+    public async Task<List<ListaPrecioClienteItemDTO>> ObtenerListaPreciosClienteAsync(string? itemCode = null)
+    {
+        var commandText = _hana.BuildProcedureCall("CBF_SP_PV_EXPORTAR_LISTA_PRECIOS_CLIENTE", 1);
+        return await _hana.QueryListAsync(
+            commandText,
+            MapListaPrecioClienteItem,
+            CommandType.Text,
+            _hana.CreateParameter("p1", string.IsNullOrWhiteSpace(itemCode) ? DBNull.Value : itemCode.Trim())
+        );
+    }
+
+    private static ListaPrecioClienteItemDTO MapListaPrecioClienteItem(DbDataReader reader)
+    {
+        int ordCodigo = reader.GetOrdinal("CODIGO");
+        int ordDescripcion = reader.GetOrdinal("DESCRIPCION");
+        int ordLaboratorio = reader.GetOrdinal("LABORATORIO");
+        int ordPrincipioActivo = reader.GetOrdinal("PRINCIPIO_ACTIVO");
+        int ordFechaVencimiento = reader.GetOrdinal("FECHA_VENCIMIENTO");
+        int ordPrecioCaja = reader.GetOrdinal("PRECIO_CAJA");
+        int ordStock = reader.GetOrdinal("STOCK");
+        
+        int ordCantidad = -1;
+        try { ordCantidad = reader.GetOrdinal("CANTIDAD"); }
+        catch { ordCantidad = reader.GetOrdinal("CANTIDAD_ESCALA"); }
+
+        int ordPrecioEscala = reader.GetOrdinal("PRECIO_ESCALA");
+
+        return new ListaPrecioClienteItemDTO
+        {
+            CODIGO = reader.IsDBNull(ordCodigo) ? null : reader.GetString(ordCodigo),
+            DESCRIPCION = reader.IsDBNull(ordDescripcion) ? null : reader.GetString(ordDescripcion),
+            LABORATORIO = reader.IsDBNull(ordLaboratorio) ? null : reader.GetString(ordLaboratorio),
+            PRINCIPIO_ACTIVO = reader.IsDBNull(ordPrincipioActivo) ? null : reader.GetString(ordPrincipioActivo),
+            FECHA_VENCIMIENTO = reader.IsDBNull(ordFechaVencimiento) ? null : reader.GetValue(ordFechaVencimiento).ToString(),
+            PRECIO_CAJA = reader.IsDBNull(ordPrecioCaja) ? 0 : Convert.ToDecimal(reader.GetValue(ordPrecioCaja)),
+            STOCK = reader.IsDBNull(ordStock) ? 0 : Convert.ToDecimal(reader.GetValue(ordStock)),
+            CANTIDAD_ESCALA = (ordCantidad >= 0 && !reader.IsDBNull(ordCantidad)) ? Convert.ToDecimal(reader.GetValue(ordCantidad)) : 0,
+            PRECIO_ESCALA = reader.IsDBNull(ordPrecioEscala) ? 0 : Convert.ToDecimal(reader.GetValue(ordPrecioEscala))
+        };
+    }
 }

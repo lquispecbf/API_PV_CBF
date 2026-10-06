@@ -165,6 +165,217 @@ namespace API.Controllers
             }
         }
 
+        [RequierePermisoModulo("PuntoVenta:Venta")]
+        [HttpGet]
+        public async Task<IActionResult> ExportarListaPreciosCliente([FromQuery] string? itemCode = null)
+        {
+            try
+            {
+                var lista = await _puntoVenta.ObtenerListaPreciosClienteAsync(itemCode);
+                if (lista == null || lista.Count == 0)
+                {
+                    return NotFound("No se encontraron artículos con stock para la lista de precios.");
+                }
+
+                var fileBytes = GenerarExcelListaPreciosCliente(lista);
+                string nombreArchivo = $"LISTA DE PRECIOS CBF {DateTime.Now:dd-MM-yyyy}.xlsx";
+
+                return File(
+                    fileBytes,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    nombreArchivo
+                );
+            }
+            catch (Exception ex)
+            {
+                await _errores.Insertar_Exception(ex);
+                return StatusCode(500, "Error al exportar la lista de precios para clientes: " + ex.Message);
+            }
+        }
+
+        private static byte[] GenerarExcelListaPreciosCliente(List<ListaPrecioClienteItemDTO> lista)
+        {
+            using var workbook = new XLWorkbook();
+            var ws = workbook.Worksheets.Add("LISTA");
+
+            // Fila 1: Título Principal
+            ws.Range("B1:K1").Merge();
+            var cellTitulo = ws.Cell("B1");
+            cellTitulo.Value = "LISTA DE PRECIOS GENERAL";
+            cellTitulo.Style.Font.Bold = true;
+            cellTitulo.Style.Font.FontSize = 16;
+            cellTitulo.Style.Font.FontColor = XLColor.White;
+            cellTitulo.Style.Fill.BackgroundColor = XLColor.FromHtml("#1ab394");
+            cellTitulo.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            cellTitulo.Style.Alignment.Vertical = XLAlignmentVerticalValues.Center;
+            ws.Row(1).Height = 28;
+
+            // Fila 2: Fecha de Validez
+            ws.Range("B2:K2").Merge();
+            var cellFecha = ws.Cell("B2");
+            cellFecha.Value = $"Válido: {DateTime.Now:dd/MM/yyyy}";
+            cellFecha.Style.Font.Bold = true;
+            cellFecha.Style.Font.FontSize = 11;
+            cellFecha.Style.Font.FontColor = XLColor.FromHtml("#2f4050");
+            cellFecha.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            ws.Row(2).Height = 18;
+
+            // Fila 3: Aviso diario y Suma Total
+            ws.Range("B3:H3").Merge();
+            var cellAviso = ws.Cell("B3");
+            cellAviso.Value = "🔔 AVISO: Los precios se actualizan diariamente. Por favor, revise la lista del día antes de realizar su pedido.";
+            cellAviso.Style.Font.Bold = true;
+            cellAviso.Style.Font.FontSize = 9.5;
+            cellAviso.Style.Font.FontColor = XLColor.FromHtml("#1c84c6");
+
+            // Total acumulado en celda I3
+            int totalFilas = 8 + lista.Count;
+            var cellTotalGlobal = ws.Cell("I3");
+            cellTotalGlobal.FormulaA1 = $"SUM(I9:I{totalFilas})";
+            cellTotalGlobal.Style.Font.Bold = true;
+            cellTotalGlobal.Style.Font.FontSize = 12;
+            cellTotalGlobal.Style.NumberFormat.Format = "#,##0.00";
+            cellTotalGlobal.Style.Fill.BackgroundColor = XLColor.FromHtml("#d1f2eb");
+            cellTotalGlobal.Style.Border.OutsideBorder = XLBorderStyleValues.Medium;
+            cellTotalGlobal.Style.Border.OutsideBorderColor = XLColor.FromHtml("#1ab394");
+
+            // Filas 4 a 7: Leyendas informativas
+            ws.Range("B4:K4").Merge();
+            ws.Cell("B4").Value = "⚠️ ADVERTENCIA: Verifique su preliminar antes de generar su pedido para evitar inconvenientes.";
+            ws.Cell("B4").Style.Font.FontSize = 9;
+            ws.Cell("B4").Style.Font.FontColor = XLColor.FromHtml("#ed5565");
+
+            ws.Range("B5:K5").Merge();
+            ws.Cell("B5").Value = "📆 LOS ÍTEMS MARCADOS DE COLOR ROJO SON PRODUCTOS CON FECHA DE CONSUMO PREFERENTE PRÓXIMO.";
+            ws.Cell("B5").Style.Font.FontSize = 9;
+            ws.Cell("B5").Style.Font.FontColor = XLColor.FromHtml("#c0392b");
+
+            ws.Range("B6:K6").Merge();
+            ws.Cell("B6").Value = "📢 LOS ÍTEMS MARCADOS DE COLOR AMARILLO, SON PRODUCTOS DE PROMOCIÓN VIGENTE EN EL MES.";
+            ws.Cell("B6").Style.Font.FontSize = 9;
+            ws.Cell("B6").Style.Font.FontColor = XLColor.FromHtml("#d35400");
+
+            ws.Range("B7:K7").Merge();
+            ws.Cell("B7").Value = "📢 NOTA: LOS PRODUCTOS GALÉNICOS SALEN A PARTIR DE 6 UNIDADES.";
+            ws.Cell("B7").Style.Font.FontSize = 9;
+            ws.Cell("B7").Style.Font.FontColor = XLColor.FromHtml("#2c3e50");
+
+            // Fila 8: Cabeceras de Tabla (Columnas B a K)
+            string[] cabeceras = {
+                "CODIGO", "DESCRIPCION", "LABORATORIO", "PRINC. ACTIVO",
+                "F. POR VENCER", "PRECIO X CAJA", "PEDIDOS ", "TOTAL", "CANTIDAD ", "PRECIO X ESCALA"
+            };
+
+            for (int col = 0; col < cabeceras.Length; col++)
+            {
+                var cellHeader = ws.Cell(8, col + 2);
+                cellHeader.Value = cabeceras[col];
+                cellHeader.Style.Font.Bold = true;
+                cellHeader.Style.Font.FontSize = 10;
+                cellHeader.Style.Font.FontColor = XLColor.White;
+                cellHeader.Style.Fill.BackgroundColor = XLColor.FromHtml("#1ab394");
+                cellHeader.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                cellHeader.Style.Alignment.Vertical = XLAlignmentVerticalValues.Center;
+                cellHeader.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+                cellHeader.Style.Border.OutsideBorderColor = XLColor.FromHtml("#16987e");
+            }
+            ws.Row(8).Height = 24;
+
+            // Filas 9 en adelante: Datos
+            int fila = 9;
+            DateTime fechaLimiteProximoVencer = DateTime.Today.AddMonths(12);
+
+            foreach (var item in lista)
+            {
+                ws.Cell(fila, 2).Value = item.CODIGO ?? "";
+                ws.Cell(fila, 3).Value = item.DESCRIPCION ?? "";
+                ws.Cell(fila, 4).Value = item.LABORATORIO ?? "";
+                ws.Cell(fila, 5).Value = item.PRINCIPIO_ACTIVO ?? "";
+
+                // F. Por Vencer
+                var cellVenc = ws.Cell(fila, 6);
+                cellVenc.Value = item.FECHA_VENCIMIENTO ?? "";
+                cellVenc.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+
+                // Precio Caja
+                var cellPrecioCaja = ws.Cell(fila, 7);
+                cellPrecioCaja.Value = item.PRECIO_CAJA;
+                cellPrecioCaja.Style.NumberFormat.Format = "#,##0.00";
+                cellPrecioCaja.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
+
+                // Pedidos (Editable por el cliente)
+                var cellPedidos = ws.Cell(fila, 8);
+                cellPedidos.Style.NumberFormat.Format = "#,##0";
+                cellPedidos.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                cellPedidos.Style.Fill.BackgroundColor = XLColor.FromHtml("#fcf3cf");
+
+                // Total con Fórmula Excel interactiva
+                var cellTotal = ws.Cell(fila, 9);
+                cellTotal.FormulaA1 = $"IF(AND(J{fila}>0,H{fila}>=J{fila}),H{fila}*K{fila},H{fila}*G{fila})";
+                cellTotal.Style.NumberFormat.Format = "#,##0.00";
+                cellTotal.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
+                cellTotal.Style.Font.Bold = true;
+
+                // Cantidad Escala
+                var cellEscalaCant = ws.Cell(fila, 10);
+                cellEscalaCant.Value = item.CANTIDAD_ESCALA;
+                cellEscalaCant.Style.NumberFormat.Format = "#,##0";
+                cellEscalaCant.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+
+                // Precio Escala
+                var cellEscalaPrecio = ws.Cell(fila, 11);
+                cellEscalaPrecio.Value = item.PRECIO_ESCALA;
+                cellEscalaPrecio.Style.NumberFormat.Format = "#,##0.00";
+                cellEscalaPrecio.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
+
+                // Resaltado si tiene promoción activa
+                if (item.CANTIDAD_ESCALA > 0 && item.PRECIO_ESCALA > 0)
+                {
+                    ws.Range(fila, 10, fila, 11).Style.Fill.BackgroundColor = XLColor.FromHtml("#fff2cc");
+                    ws.Range(fila, 10, fila, 11).Style.Font.Bold = true;
+                }
+
+                // Resaltado de vencimiento próximo
+                if (!string.IsNullOrWhiteSpace(item.FECHA_VENCIMIENTO) &&
+                    DateTime.TryParseExact(item.FECHA_VENCIMIENTO, "dd/MM/yyyy", CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime fVenc))
+                {
+                    if (fVenc < fechaLimiteProximoVencer)
+                    {
+                        //cellVenc.Style.Fill.BackgroundColor = XLColor.FromHtml("#fce4d6");
+                        //cellVenc.Style.Font.FontColor = XLColor.FromHtml("#c0392b");
+                        //cellVenc.Style.Font.Bold = true;
+                        ws.Range(fila,2,fila,6).Style.Font.FontColor = XLColor.FromHtml("#c0392b");
+                        ws.Range(fila, 2, fila, 6).Style.Font.Bold = true;
+                    }
+                }
+
+                // Bordes delgados para cada celda
+                ws.Range(fila, 2, fila, 11).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+                ws.Range(fila, 2, fila, 11).Style.Border.OutsideBorderColor = XLColor.FromHtml("#e7eaec");
+                ws.Range(fila, 2, fila, 11).Style.Border.InsideBorder = XLBorderStyleValues.Thin;
+                ws.Range(fila, 2, fila, 11).Style.Border.InsideBorderColor = XLColor.FromHtml("#e7eaec");
+
+                fila++;
+            }
+
+            ws.Columns(2, 11).AdjustToContents();
+            ws.Column(1).Width = 3;
+            ws.Column(2).Width = 14; // CODIGO
+            ws.Column(3).Width = 45; // DESCRIPCION
+            ws.Column(4).Width = 28; // LABORATORIO
+            ws.Column(5).Width = 32; // PRINC. ACTIVO
+            ws.Column(6).Width = 15; // F. POR VENCER
+            ws.Column(7).Width = 15; // PRECIO X CAJA
+            ws.Column(8).Width = 12; // PEDIDOS
+            ws.Column(9).Width = 15; // TOTAL
+            ws.Column(10).Width = 13; // CANTIDAD
+            ws.Column(11).Width = 16; // PRECIO X ESCALA
+
+            using var stream = new MemoryStream();
+            workbook.SaveAs(stream);
+            return stream.ToArray();
+        }
+
         private static byte[] GenerarExcelStockPorAlmacen(List<StockPorAlmacenDTO> stock)
         {
             using var workbook = new XLWorkbook();
