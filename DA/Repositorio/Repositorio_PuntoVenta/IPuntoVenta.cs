@@ -33,7 +33,7 @@ public interface IPuntoVenta
     Task<List<ArticuloPrecioDTO>> ObtenerPrecios(List<string> codigosArticulos, int codigoListaPrecio, string codigoAlmacen, string codigoCliente);
     Task<List<LoteDisponibleSapDTO>> BuscarLotesArticulo(string codigoArticulo, string codigoAlmacen);
     Task<Dictionary<string, List<LoteDisponibleSapDTO>>> BuscarLotesArticulosBatch(List<string> codigosArticulos, string codigoAlmacen);
-    Task<VentaGuardarResponseDTO> GuardarVentaCompleta(VentaGuardarRequestDTO request);
+    Task<VentaGuardarResponseDTO> GuardarVentaCompleta(VentaGuardarRequestDTO request, string? usuario = null);
     Task<List<VentaListaDTO>> ListarVentas(VentaBusquedaFiltroDTO filtro);
     Task<int?> ObtenerVendedorPorDocEntry(int docEntry, int docEntrySap = 0);
     Task<List<LogImportadorDTO>> ListarLogImportador(int docEntry);
@@ -78,4 +78,10 @@ public interface IPuntoVenta
     Task<int> ActualizarCondicionPagoPuntoVenta(int docEntryPv, int docEntrySap, int groupNumNuevo, string? condicionNuevo = null);
     Task<int> RegistrarHistorialCondicionPago(BE_HistorialCondicionPago historial);
     Task<List<BE_HistorialCondicionPago>> ListarHistorialCondicionPago(int docEntryPv, int docEntrySap);
+
+    // DIGEMID
+    Task<int> GuardarImagenDigemid(VentaDigemidDTO dto, string? usuario = null);
+    Task<VentaDigemidDTO?> ObtenerImagenDigemidPorDocEntry(int docEntry);
+    Task<(bool Exito, string Mensaje)> RegularizarImagenDigemid(VentaDigemidRegularizarRequestDTO request);
+    (byte[]? Bytes, string? ContentType) ObtenerArchivoImagenDigemid(string nombreArchivo);
 }

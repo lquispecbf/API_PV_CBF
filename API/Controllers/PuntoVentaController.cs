@@ -1324,7 +1324,8 @@ namespace API.Controllers
                     }
                 }
 
-                var resultado = await _puntoVenta.GuardarVentaCompleta(request);
+                var usuarioActual = ObtenerUsuarioActual();
+                var resultado = await _puntoVenta.GuardarVentaCompleta(request, usuarioActual);
 
                 if (resultado.EXITO)
                     return Ok(resultado);
@@ -3347,6 +3348,36 @@ namespace API.Controllers
             }
 
             return Ok(resultado);
+        }
+
+        [HttpGet]
+        public async Task<IActionResult> ObtenerDigemidPorDocEntry([FromQuery] int docEntry)
+        {
+            if (docEntry <= 0) return BadRequest("El DocEntry es requerido.");
+            var resultado = await _puntoVenta.ObtenerImagenDigemidPorDocEntry(docEntry);
+            return Ok(resultado);
+        }
+
+        [HttpPost]
+        public async Task<IActionResult> RegularizarDigemid([FromBody] VentaDigemidRegularizarRequestDTO request)
+        {
+            if (request == null || request.DOCENTRY <= 0) return BadRequest("Datos de regularización inválidos.");
+            request.USUARIO = ObtenerUsuarioActual();
+            var resultado = await _puntoVenta.RegularizarImagenDigemid(request);
+            if (!resultado.Exito)
+            {
+                return BadRequest(new { success = false, message = resultado.Mensaje });
+            }
+            return Ok(new { success = true, message = resultado.Mensaje });
+        }
+
+        [HttpGet]
+        public IActionResult Ver_ImagenDigemid([FromQuery] string nombreArchivo)
+        {
+            if (string.IsNullOrWhiteSpace(nombreArchivo)) return BadRequest("El nombre del archivo es requerido.");
+            var (bytes, contentType) = _puntoVenta.ObtenerArchivoImagenDigemid(nombreArchivo);
+            if (bytes == null || bytes.Length == 0) return NotFound("No se encontró la imagen de la constancia DIGEMID.");
+            return File(bytes, contentType ?? "image/png");
         }
 
         #endregion

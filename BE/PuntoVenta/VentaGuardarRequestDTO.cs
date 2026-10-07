@@ -42,4 +42,5 @@ public class VentaGuardarRequestDTO
 
     public List<VentaDetalleDTO> DETALLE { get; set; } = new();
     public List<int> NOTAS_CREDITO { get; set; } = new();
+    public VentaDigemidDTO? DIGEMID { get; set; }
 }

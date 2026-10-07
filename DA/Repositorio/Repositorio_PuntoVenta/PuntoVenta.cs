@@ -13,6 +13,11 @@ using System.Globalization;
 using System.Net.Http;
 using System.Text;
 
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
+using System.IO;
+using System.Text.RegularExpressions;
+
 namespace DA.Repositorio.Repositorio_PuntoVenta;
 
 public class PuntoVenta : IPuntoVenta
@@ -21,12 +26,22 @@ public class PuntoVenta : IPuntoVenta
     private readonly ISqlExecutor _sql;
     private readonly ISapServiceClient _sapClient;
     private readonly string _cadenaSQLPOS;
+    private readonly IConfiguration _configuration;
+    private readonly IHostEnvironment _env;
 
-    public PuntoVenta(IHanaExecutor hana, ISqlExecutor sql, IOptions<ConfiguracionConexion> config, ISapServiceClient sapClient)
+    public PuntoVenta(
+        IHanaExecutor hana, 
+        ISqlExecutor sql, 
+        IOptions<ConfiguracionConexion> config, 
+        ISapServiceClient sapClient,
+        IConfiguration configuration,
+        IHostEnvironment env)
     {
         _hana = hana;
         _sql = sql;
         _sapClient = sapClient ?? throw new ArgumentNullException(nameof(sapClient));
+        _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+        _env = env ?? throw new ArgumentNullException(nameof(env));
         _cadenaSQLPOS = config.Value.CadenaSQLPOS
             ?? throw new ArgumentNullException(nameof(config.Value.CadenaSQLPOS));
     }
@@ -1400,7 +1415,7 @@ public class PuntoVenta : IPuntoVenta
             $"El sistema está terminando de anular la orden previa en SAP (DocEntry SAP: {docEntrySap}). Por favor presione Guardar nuevamente en unos segundos para asegurar que no quede stock comprometido.");
     }
 
-    public async Task<VentaGuardarResponseDTO> GuardarVentaCompleta(VentaGuardarRequestDTO request)
+    public async Task<VentaGuardarResponseDTO> GuardarVentaCompleta(VentaGuardarRequestDTO request, string? usuario = null)
     {
         var response = new VentaGuardarResponseDTO();
         var swTotal = Stopwatch.StartNew();
@@ -1545,6 +1560,27 @@ public class PuntoVenta : IPuntoVenta
             swStep.Restart();
             tran.Commit();
             Console.WriteLine($"[TELEMETRIA-PV] 6. Commit de Transacción SQL: {swStep.ElapsedMilliseconds} ms");
+
+            if (request.DIGEMID != null)
+            {
+                try
+                {
+                    request.DIGEMID.DOCENTRY = docEntry;
+                    request.DIGEMID.CARDCODE = request.CARDCODE ?? request.DIGEMID.CARDCODE;
+                    request.DIGEMID.CARDNAME = request.CARDNAME ?? request.DIGEMID.CARDNAME;
+                    request.DIGEMID.LICTRADNUM = request.LICTRADNUM ?? request.DIGEMID.LICTRADNUM;
+                    
+                    var usuarioDigemid = !string.IsNullOrWhiteSpace(usuario)
+                        ? usuario
+                        : (!string.IsNullOrWhiteSpace(request.DIGEMID.USUARIO_CREACION) ? request.DIGEMID.USUARIO_CREACION : null);
+
+                    await GuardarImagenDigemid(request.DIGEMID, usuarioDigemid);
+                }
+                catch (Exception exDigemid)
+                {
+                    Console.WriteLine($"[DIGEMID-PV] Advertencia al guardar constancia DIGEMID para DocEntry {docEntry}: {exDigemid.Message}");
+                }
+            }
 
             swTotal.Stop();
             Console.WriteLine($"[TELEMETRIA-PV] === TIEMPO TOTAL EN REPOSITORIO SQL: {swTotal.ElapsedMilliseconds} ms ===");
@@ -3486,4 +3522,212 @@ public class PuntoVenta : IPuntoVenta
             PRECIO_ESCALA = reader.IsDBNull(ordPrecioEscala) ? 0 : Convert.ToDecimal(reader.GetValue(ordPrecioEscala))
         };
     }
+
+    #region DIGEMID (Persistencia, Archivos y Regularización - OWASP Top 10)
+
+    private string ResolverRutaCarpetaDigemid()
+    {
+        var rutaConfig = _configuration["RutaImagenesDigemid"] ?? "img/Imagenes_DIGEMID";
+        var rutaFisica = _configuration["RutaFisicaImagenesDigemid"];
+
+        if (!string.IsNullOrWhiteSpace(rutaFisica))
+        {
+            if (!Directory.Exists(rutaFisica))
+            {
+                Directory.CreateDirectory(rutaFisica);
+            }
+            return rutaFisica;
+        }
+
+        var basePath = _env.ContentRootPath;
+        var rutaCompleta = Path.Combine(basePath, "wwwroot", rutaConfig.Replace("/", Path.DirectorySeparatorChar.ToString()));
+        if (!Directory.Exists(rutaCompleta))
+        {
+            Directory.CreateDirectory(rutaCompleta);
+        }
+        return rutaCompleta;
+    }
+
+    private string GuardarArchivoImagenDigemid(int docEntry, string ruc, DateTime fechaCaptura, string? base64Data)
+    {
+        if (docEntry <= 0) throw new ArgumentException("El DocEntry debe ser mayor a 0.", nameof(docEntry));
+
+        var rucLimpio = Regex.Replace(ruc ?? "", @"[^\d]", "").Trim();
+        if (rucLimpio.Length != 11) throw new ArgumentException("El RUC debe tener 11 dígitos numéricos.", nameof(ruc));
+
+        var timestampStr = (fechaCaptura == default ? DateTime.Now : fechaCaptura).ToString("yyyyMMdd_HHmmss");
+        var nombreArchivo = $"{docEntry}-{rucLimpio}-{timestampStr}.png";
+
+        if (string.IsNullOrWhiteSpace(base64Data))
+        {
+            return nombreArchivo;
+        }
+
+        var rawBase64 = base64Data;
+        if (rawBase64.Contains(","))
+        {
+            rawBase64 = rawBase64.Substring(rawBase64.IndexOf(",") + 1);
+        }
+
+        byte[] bytes;
+        try
+        {
+            bytes = Convert.FromBase64String(rawBase64.Trim());
+        }
+        catch (FormatException)
+        {
+            throw new InvalidOperationException("El formato de la imagen en Base64 es inválido.");
+        }
+
+        // OWASP A08 / A05: Límite de tamaño 5MB
+        if (bytes.Length > 5 * 1024 * 1024)
+        {
+            throw new InvalidOperationException("El tamaño de la imagen de DIGEMID no puede superar los 5 MB.");
+        }
+
+        // OWASP A08: Validación de Magic Bytes PNG (89 50 4E 47 0D 0A 1A 0A)
+        if (bytes.Length < 8 ||
+            bytes[0] != 0x89 || bytes[1] != 0x50 || bytes[2] != 0x4E || bytes[3] != 0x47 ||
+            bytes[4] != 0x0D || bytes[5] != 0x0A || bytes[6] != 0x1A || bytes[7] != 0x0A)
+        {
+            throw new InvalidOperationException("El archivo proporcionado no tiene una firma de imagen PNG válida.");
+        }
+
+        var rutaCarpeta = ResolverRutaCarpetaDigemid();
+        var rutaCompleta = Path.Combine(rutaCarpeta, nombreArchivo);
+
+        File.WriteAllBytes(rutaCompleta, bytes);
+
+        return nombreArchivo;
+    }
+
+    public async Task<int> GuardarImagenDigemid(VentaDigemidDTO dto, string? usuario = null)
+    {
+        if (dto == null) return 0;
+
+        string nombreArchivo = dto.NOMBRE_ARCHIVO;
+
+        if (!string.IsNullOrWhiteSpace(dto.IMAGEN_BASE64))
+        {
+            nombreArchivo = GuardarArchivoImagenDigemid(dto.DOCENTRY, dto.LICTRADNUM, dto.FECHA_CAPTURA, dto.IMAGEN_BASE64);
+        }
+        else if (string.IsNullOrWhiteSpace(nombreArchivo))
+        {
+            var timestampStr = (dto.FECHA_CAPTURA == default ? DateTime.Now : dto.FECHA_CAPTURA).ToString("yyyyMMdd_HHmmss");
+            nombreArchivo = $"{dto.DOCENTRY}-{dto.LICTRADNUM}-{timestampStr}.png";
+        }
+
+        var result = await _sql.QuerySingleAsync<int>(
+            "SP_PV_GUARDAR_IMAGEN_DIGEMID",
+            reader => reader.IsDBNull(0) ? 0 : Convert.ToInt32(reader.GetValue(0)),
+            TipoConexionSql.Produccion,
+            CommandType.StoredProcedure,
+            _sql.CreateParameter("@DocEntry", dto.DOCENTRY),
+            _sql.CreateParameter("@DocEntrySap", (object?)dto.DOCENTRY_SAP ?? DBNull.Value),
+            _sql.CreateParameter("@CardCode", dto.CARDCODE ?? ""),
+            _sql.CreateParameter("@CardName", (object?)dto.CARDNAME ?? DBNull.Value),
+            _sql.CreateParameter("@LicTradNum", dto.LICTRADNUM ?? ""),
+            _sql.CreateParameter("@FechaConsulta", dto.FECHA_CONSULTA == default ? DateTime.Now : dto.FECHA_CONSULTA),
+            _sql.CreateParameter("@FechaCaptura", dto.FECHA_CAPTURA == default ? DateTime.Now : dto.FECHA_CAPTURA),
+            _sql.CreateParameter("@NombreArchivo", nombreArchivo),
+            _sql.CreateParameter("@NombreOriginal", (object?)dto.NOMBRE_ORIGINAL ?? DBNull.Value),
+            _sql.CreateParameter("@EstadoServicioDigemid", dto.ESTADO_SERVICIO_DIGEMID ?? "EXITOSO"),
+            _sql.CreateParameter("@TieneDataDigemid", dto.TIENE_DATA_DIGEMID),
+            _sql.CreateParameter("@EstablecimientoJson", (object?)dto.ESTABLECIMIENTO_JSON ?? DBNull.Value),
+            _sql.CreateParameter("@RequiereRegularizacion", dto.REQUIERE_REGULARIZACION),
+            _sql.CreateParameter("@Usuario", (object?)usuario ?? DBNull.Value)
+        );
+
+        return result;
+    }
+
+    public async Task<VentaDigemidDTO?> ObtenerImagenDigemidPorDocEntry(int docEntry)
+    {
+        return await _sql.QuerySingleOrDefaultAsync<VentaDigemidDTO>(
+            "SP_PV_OBTENER_IMAGEN_DIGEMID_POR_DOCENTRY",
+            MapVentaDigemid,
+            TipoConexionSql.Produccion,
+            CommandType.StoredProcedure,
+            _sql.CreateParameter("@DocEntry", docEntry)
+        );
+    }
+
+    private static VentaDigemidDTO MapVentaDigemid(DbDataReader reader)
+    {
+        return new VentaDigemidDTO
+        {
+            ID_DIGEMID_PV = reader.GetInt32(reader.GetOrdinal("ID_DIGEMID_PV")),
+            DOCENTRY = reader.GetInt32(reader.GetOrdinal("DOCENTRY")),
+            DOCENTRY_SAP = reader.IsDBNull(reader.GetOrdinal("DOCENTRY_SAP")) ? null : reader.GetInt32(reader.GetOrdinal("DOCENTRY_SAP")),
+            CARDCODE = reader.GetString(reader.GetOrdinal("CARDCODE")),
+            CARDNAME = reader.IsDBNull(reader.GetOrdinal("CARDNAME")) ? null : reader.GetString(reader.GetOrdinal("CARDNAME")),
+            LICTRADNUM = reader.GetString(reader.GetOrdinal("LICTRADNUM")),
+            FECHA_CONSULTA = reader.GetDateTime(reader.GetOrdinal("FECHA_CONSULTA")),
+            FECHA_CAPTURA = reader.GetDateTime(reader.GetOrdinal("FECHA_CAPTURA")),
+            NOMBRE_ARCHIVO = reader.GetString(reader.GetOrdinal("NOMBRE_ARCHIVO")),
+            NOMBRE_ORIGINAL = reader.IsDBNull(reader.GetOrdinal("NOMBRE_ORIGINAL")) ? null : reader.GetString(reader.GetOrdinal("NOMBRE_ORIGINAL")),
+            ESTADO_SERVICIO_DIGEMID = reader.GetString(reader.GetOrdinal("ESTADO_SERVICIO_DIGEMID")),
+            TIENE_DATA_DIGEMID = reader.GetBoolean(reader.GetOrdinal("TIENE_DATA_DIGEMID")),
+            ESTABLECIMIENTO_JSON = reader.IsDBNull(reader.GetOrdinal("ESTABLECIMIENTO_JSON")) ? null : reader.GetString(reader.GetOrdinal("ESTABLECIMIENTO_JSON")),
+            REQUIERE_REGULARIZACION = reader.GetBoolean(reader.GetOrdinal("REQUIERE_REGULARIZACION")),
+            FECHA_REGULARIZACION = reader.IsDBNull(reader.GetOrdinal("FECHA_REGULARIZACION")) ? null : reader.GetDateTime(reader.GetOrdinal("FECHA_REGULARIZACION")),
+            USUARIO_REGULARIZACION = reader.IsDBNull(reader.GetOrdinal("USUARIO_REGULARIZACION")) ? null : reader.GetString(reader.GetOrdinal("USUARIO_REGULARIZACION")),
+            ESTADO = reader.GetString(reader.GetOrdinal("ESTADO")),
+            FECHA_CREACION = reader.IsDBNull(reader.GetOrdinal("FECHA_CREACION")) ? null : reader.GetDateTime(reader.GetOrdinal("FECHA_CREACION")),
+            USUARIO_CREACION = reader.IsDBNull(reader.GetOrdinal("USUARIO_CREACION")) ? null : reader.GetString(reader.GetOrdinal("USUARIO_CREACION")),
+            FECHA_MODIFICACION = reader.IsDBNull(reader.GetOrdinal("FECHA_MODIFICACION")) ? null : reader.GetDateTime(reader.GetOrdinal("FECHA_MODIFICACION")),
+            USUARIO_MODIFICACION = reader.IsDBNull(reader.GetOrdinal("USUARIO_MODIFICACION")) ? null : reader.GetString(reader.GetOrdinal("USUARIO_MODIFICACION"))
+        };
+    }
+
+    public async Task<(bool Exito, string Mensaje)> RegularizarImagenDigemid(VentaDigemidRegularizarRequestDTO request)
+    {
+        if (request == null || request.DOCENTRY <= 0)
+        {
+            return (false, "Parámetros de regularización inválidos.");
+        }
+
+        var nombreArchivo = GuardarArchivoImagenDigemid(
+            request.DOCENTRY, 
+            request.LICTRADNUM, 
+            request.FECHA_CAPTURA == default ? DateTime.Now : request.FECHA_CAPTURA, 
+            request.IMAGEN_BASE64
+        );
+
+        await _sql.ExecuteNonQueryAsync(
+            "SP_PV_REGULARIZAR_IMAGEN_DIGEMID",
+            TipoConexionSql.Produccion,
+            CommandType.StoredProcedure,
+            _sql.CreateParameter("@DocEntry", request.DOCENTRY),
+            _sql.CreateParameter("@FechaConsulta", request.FECHA_CONSULTA == default ? DateTime.Now : request.FECHA_CONSULTA),
+            _sql.CreateParameter("@FechaCaptura", request.FECHA_CAPTURA == default ? DateTime.Now : request.FECHA_CAPTURA),
+            _sql.CreateParameter("@NombreArchivo", nombreArchivo),
+            _sql.CreateParameter("@NombreOriginal", (object?)nombreArchivo ?? DBNull.Value),
+            _sql.CreateParameter("@EstadoServicioDigemid", request.ESTADO_SERVICIO_DIGEMID ?? "EXITOSO"),
+            _sql.CreateParameter("@TieneDataDigemid", request.TIENE_DATA_DIGEMID),
+            _sql.CreateParameter("@EstablecimientoJson", (object?)request.ESTABLECIMIENTO_JSON ?? DBNull.Value),
+            _sql.CreateParameter("@Usuario", (object?)request.USUARIO ?? DBNull.Value)
+        );
+
+        return (true, "Constancia DIGEMID regularizada exitosamente.");
+    }
+
+    public (byte[]? Bytes, string? ContentType) ObtenerArchivoImagenDigemid(string nombreArchivo)
+    {
+        if (string.IsNullOrWhiteSpace(nombreArchivo)) return (null, null);
+
+        // OWASP Path Traversal prevention: sanitizar nombre base
+        var sanitized = Path.GetFileName(nombreArchivo);
+        if (!sanitized.EndsWith(".png", StringComparison.OrdinalIgnoreCase)) return (null, null);
+
+        var rutaCarpeta = ResolverRutaCarpetaDigemid();
+        var rutaCompleta = Path.Combine(rutaCarpeta, sanitized);
+
+        if (!File.Exists(rutaCompleta)) return (null, null);
+
+        var bytes = File.ReadAllBytes(rutaCompleta);
+        return (bytes, "image/png");
+    }
+
+    #endregion
 }

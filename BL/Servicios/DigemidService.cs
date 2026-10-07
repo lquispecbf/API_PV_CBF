@@ -1,4 +1,5 @@
 using BE.PuntoVenta;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
@@ -15,6 +16,7 @@ namespace BL.Servicios
     {
         public const string HttpClientName = "DigemidClient";
         private readonly IHttpClientFactory _httpClientFactory;
+        private readonly IConfiguration _configuration;
         private readonly ILogger<DigemidService> _logger;
 
         // Control de concurrencia y retardo controlado entre peticiones salientes
@@ -22,9 +24,10 @@ namespace BL.Servicios
         private static DateTime _ultimoAccesoUtc = DateTime.MinValue;
         private const int IntervaloMinimoMs = 2000; // 2 segundos mínimos entre peticiones a DIGEMID
 
-        public DigemidService(IHttpClientFactory httpClientFactory, ILogger<DigemidService> logger)
+        public DigemidService(IHttpClientFactory httpClientFactory, IConfiguration configuration, ILogger<DigemidService> logger)
         {
             _httpClientFactory = httpClientFactory;
+            _configuration = configuration;
             _logger = logger;
         }
 
@@ -39,6 +42,49 @@ namespace BL.Servicios
                     Ruc = rucLimpio,
                     Error = "El número de RUC debe tener 11 dígitos numéricos."
                 };
+            }
+
+            // Simulación de Fallas para pruebas desde appsettings.json (Opción 1)
+            bool simularFalla = _configuration.GetValue<bool>("Digemid:SimularFalla", false);
+            if (simularFalla)
+            {
+                string tipoFalla = (_configuration.GetValue<string>("Digemid:TipoFalla") ?? "BLOQUEO_1015").Trim().ToUpperInvariant();
+                _logger.LogWarning("[SIMULACION-DIGEMID] Simulación de falla activa ({TipoFalla}) para RUC {Ruc}", tipoFalla, rucLimpio);
+
+                switch (tipoFalla)
+                {
+                    case "TIMEOUT":
+                        return new DigemidConsultaResponseDTO
+                        {
+                            Success = false,
+                            Ruc = rucLimpio,
+                            Error = "El portal de DIGEMID tardó demasiado en responder (Tiempo de espera agotado). Intente nuevamente."
+                        };
+                    case "HTTP_500":
+                    case "ERROR_500":
+                        return new DigemidConsultaResponseDTO
+                        {
+                            Success = false,
+                            Ruc = rucLimpio,
+                            Error = "El servidor de DIGEMID respondió con estado HTTP 500 (Internal Server Error)."
+                        };
+                    case "OFFLINE":
+                    case "SIN_SERVICIO":
+                        return new DigemidConsultaResponseDTO
+                        {
+                            Success = false,
+                            Ruc = rucLimpio,
+                            Error = "El portal de DIGEMID (MINSA) se encuentra temporalmente fuera de servicio."
+                        };
+                    case "BLOQUEO_1015":
+                    default:
+                        return new DigemidConsultaResponseDTO
+                        {
+                            Success = false,
+                            Ruc = rucLimpio,
+                            Error = "El portal de DIGEMID se encuentra temporalmente ocupado o limitando consultas por alto tráfico. Por favor, volver a consultar."
+                        };
+                }
             }
 
             await _throttler.WaitAsync();
@@ -71,7 +117,7 @@ namespace BL.Servicios
                     {
                         Success = false,
                         Ruc = rucLimpio,
-                        Error = "El portal de DIGEMID se encuentra temporalmente ocupado o limitando consultas por alto tráfico (Cloudflare 1015). Por favor, espere 1 o 2 minutos antes de volver a consultar."
+                        Error = "El portal de DIGEMID se encuentra temporalmente ocupado o limitando consultas por alto tráfico. Por favor, volver a consultar."
                     };
                 }
 
