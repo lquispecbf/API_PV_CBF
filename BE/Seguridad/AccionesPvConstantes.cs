@@ -15,6 +15,7 @@ namespace BE.Seguridad
         public const string VentaMantenerSesion = "VENTA.MANTENER_SESION";
         public const string VentaImprimir = "VENTA.IMPRIMIR";
         public const string VentaExportarExcel = "VENTA.EXPORTAR_EXCEL";
+        public const string VentaDescargarListaPrecios = "VENTA.DESCARGAR_LISTA_PRECIOS";
 
         // Módulo Clientes Bloqueados
         public const string ClienteBloqueadoVer = "CLIENTE_BLOQUEADO.VER";

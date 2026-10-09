@@ -166,6 +166,7 @@ namespace API.Controllers
         }
 
         [RequierePermisoModulo("PuntoVenta:Venta")]
+        [RequiereAccionPv(AccionesPvConstantes.VentaDescargarListaPrecios)]
         [HttpGet]
         public async Task<IActionResult> ExportarListaPreciosCliente([FromQuery] string? itemCode = null)
         {

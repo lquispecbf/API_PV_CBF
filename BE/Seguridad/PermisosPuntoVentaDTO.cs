@@ -23,6 +23,7 @@ namespace BE.Seguridad
         public bool MantenerSesion => TieneAccion(AccionesPvConstantes.VentaMantenerSesion);
         public bool PuedeImprimir => TieneAccion(AccionesPvConstantes.VentaImprimir);
         public bool PuedeExportarExcel => TieneAccion(AccionesPvConstantes.VentaExportarExcel);
+        public bool PuedeDescargarListaPrecios => TieneAccion(AccionesPvConstantes.VentaDescargarListaPrecios);
 
         public bool PuedeClienteBloqueadoVer => TieneAccion(AccionesPvConstantes.ClienteBloqueadoVer);
         public bool PuedeClienteBloqueadoGestionar => TieneAccion(AccionesPvConstantes.ClienteBloqueadoGestionar);
