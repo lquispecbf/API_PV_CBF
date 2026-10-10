@@ -12,5 +12,6 @@ namespace BE.Seguridad
         public string? Token { get; set; }
         public System.DateTime Expiration { get; set; }
         public string? Mensaje { get; set; }
+        public int? CodigoVendedorSap { get; set; }
     }
 }

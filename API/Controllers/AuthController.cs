@@ -353,7 +353,8 @@ namespace API.Controllers
                     Success = true,
                     Token = token,
                     Expiration = expiration,
-                    Mensaje = "Token renovado exitosamente."
+                    Mensaje = "Token renovado exitosamente.",
+                    CodigoVendedorSap = usuario.CODIGO_VENDEDOR_SAP ?? 0
                 });
             }
             catch (Exception ex)

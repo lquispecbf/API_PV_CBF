@@ -216,6 +216,19 @@ namespace DA.Repositorio.Repositorio_Usuario
                         {
                             while (await lector.ReadAsync())
                             {
+                                int? codVendedorSap = 0;
+                                for (int i = 0; i < lector.FieldCount; i++)
+                                {
+                                    if (string.Equals(lector.GetName(i), "CODIGO_VENDEDOR_SAP", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        if (!lector.IsDBNull(i))
+                                        {
+                                            codVendedorSap = Convert.ToInt32(lector.GetValue(i));
+                                        }
+                                        break;
+                                    }
+                                }
+
                                 var obj_BE = new BE_Usuario
                                 {
                                     ID = lector.IsDBNull(0) ? 0 : lector.GetInt32(0),
@@ -242,9 +255,8 @@ namespace DA.Repositorio.Repositorio_Usuario
                                     IDEMPLEADO = lector.IsDBNull(19) ? (long?)null : lector.GetInt64(19),   // 👈 nuevo, índice 19
                                     ULTIMO_CAMBIO_CLAVE = lector.IsDBNull(20) ? "" : lector[20].ToString().Trim(),
                                     //ULTIMO_CAMBIO_CLAVE = lector.IsDBNull(19) ? "" : lector[19].ToString().Trim(),
-                                    BLOQUEADO = Convert.ToBoolean(lector["BLOQUEADO"].ToString().Trim())
-
-
+                                    BLOQUEADO = Convert.ToBoolean(lector["BLOQUEADO"].ToString().Trim()),
+                                    CODIGO_VENDEDOR_SAP = codVendedorSap
                                 };
 
                                 lista.Add(obj_BE);
