@@ -1325,6 +1325,56 @@ namespace API.Controllers
                     }
                 }
 
+                // Validación obligatoria de Constancia DIGEMID (OWASP A04 - Server Side Business Logic Validation)
+                // Se aplica cuando no es guardado en borrador (DOCSTATUS != "E") y el cliente tiene RUC (11 dígitos), salvo grupo OTRO (121)
+                if (!string.Equals(request.DOCSTATUS, "E", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(request.CARDCODE))
+                {
+                    var rucLimpio = System.Text.RegularExpressions.Regex.Replace(request.LICTRADNUM ?? "", @"[^\d]", "").Trim();
+                    int? groupCode = null;
+
+                    try
+                    {
+                        var clientesSap = await _puntoVenta.BuscarCliente(request.CARDCODE);
+                        var clienteActual = clientesSap.FirstOrDefault(c => string.Equals(c.CODIGO_CLIENTE, request.CARDCODE, StringComparison.OrdinalIgnoreCase));
+                        if (clienteActual != null)
+                        {
+                            groupCode = clienteActual.GROUP_CODE;
+                            if (string.IsNullOrWhiteSpace(rucLimpio) && !string.IsNullOrWhiteSpace(clienteActual.RUC))
+                            {
+                                rucLimpio = System.Text.RegularExpressions.Regex.Replace(clienteActual.RUC, @"[^\d]", "").Trim();
+                            }
+                        }
+                    }
+                    catch (Exception exSap)
+                    {
+                        Log.Warning(exSap, "[DIGEMID-PV] No se pudo verificar el grupo SAP para el cliente {CardCode}", request.CARDCODE);
+                    }
+
+                    // Si el cliente tiene RUC (11 dígitos) y NO pertenece al grupo 121 (OTRO), DIGEMID es estrictamente obligatorio
+                    if (rucLimpio.Length == 11 && groupCode != 121)
+                    {
+                        bool tieneDigemidValido = request.DIGEMID != null &&
+                            (!string.IsNullOrWhiteSpace(request.DIGEMID.IMAGEN_BASE64) || request.DIGEMID.ID_DIGEMID_PV > 0);
+
+                        if (!tieneDigemidValido && request.DOCENTRY > 0)
+                        {
+                            var digemidExistente = await _puntoVenta.ObtenerImagenDigemidPorDocEntry(request.DOCENTRY);
+                            if (digemidExistente != null && digemidExistente.ID_DIGEMID_PV > 0)
+                            {
+                                tieneDigemidValido = true;
+                            }
+                        }
+
+                        if (!tieneDigemidValido)
+                        {
+                            return BadRequest(new
+                            {
+                                error = "Para clientes con RUC es obligatorio registrar la captura de la constancia DIGEMID antes de guardar la venta."
+                            });
+                        }
+                    }
+                }
+
                 var usuarioActual = ObtenerUsuarioActual();
                 var resultado = await _puntoVenta.GuardarVentaCompleta(request, usuarioActual);
 

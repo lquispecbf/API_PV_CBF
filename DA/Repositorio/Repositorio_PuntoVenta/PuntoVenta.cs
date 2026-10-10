@@ -78,7 +78,8 @@ public class PuntoVenta : IPuntoVenta
             LIMITE_CREDITO = reader.IsDBNull(ordLimiteCredito) ? 0 : Convert.ToDecimal(reader.GetValue(ordLimiteCredito)),
             SLPCODE = reader.IsDBNull(ordSlpCode) ? 0 : reader.GetInt32(ordSlpCode),
             SLPNAME = reader.IsDBNull(ordSlpName) ? null : reader.GetString(ordSlpName),
-            LISTA_PRECIO = TryGetString(reader, "LISTA_PRECIO")
+            LISTA_PRECIO = TryGetString(reader, "LISTA_PRECIO"),
+            GROUP_CODE = TryGetInt32(reader, "GROUP_CODE")
         };
     }
     public async Task<List<ListaPrecioSapDTO>> BuscarListaPrecios(string? nombreBusqueda)
@@ -2396,7 +2397,9 @@ public class PuntoVenta : IPuntoVenta
         try
         {
             int ord = reader.GetOrdinal(columnName);
-            return reader.IsDBNull(ord) ? null : reader.GetInt32(ord);
+            if (reader.IsDBNull(ord)) return null;
+            var val = reader.GetValue(ord);
+            return Convert.ToInt32(val);
         }
         catch
         {
