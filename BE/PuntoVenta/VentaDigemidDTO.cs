@@ -33,6 +33,9 @@ namespace BE.PuntoVenta
     public class VentaDigemidRegularizarRequestDTO
     {
         public int DOCENTRY { get; set; }
+        public int? DOCENTRY_SAP { get; set; }
+        public string? CARDCODE { get; set; }
+        public string? CARDNAME { get; set; }
         public string LICTRADNUM { get; set; } = string.Empty;
         public DateTime FECHA_CONSULTA { get; set; }
         public DateTime FECHA_CAPTURA { get; set; }

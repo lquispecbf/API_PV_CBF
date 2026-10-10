@@ -3706,7 +3706,11 @@ public class PuntoVenta : IPuntoVenta
             _sql.CreateParameter("@EstadoServicioDigemid", request.ESTADO_SERVICIO_DIGEMID ?? "EXITOSO"),
             _sql.CreateParameter("@TieneDataDigemid", request.TIENE_DATA_DIGEMID),
             _sql.CreateParameter("@EstablecimientoJson", (object?)request.ESTABLECIMIENTO_JSON ?? DBNull.Value),
-            _sql.CreateParameter("@Usuario", (object?)request.USUARIO ?? DBNull.Value)
+            _sql.CreateParameter("@Usuario", (object?)request.USUARIO ?? DBNull.Value),
+            _sql.CreateParameter("@CardCode", (object?)request.CARDCODE ?? DBNull.Value),
+            _sql.CreateParameter("@CardName", (object?)request.CARDNAME ?? DBNull.Value),
+            _sql.CreateParameter("@LicTradNum", (object?)request.LICTRADNUM ?? DBNull.Value),
+            _sql.CreateParameter("@DocEntrySap", (object?)request.DOCENTRY_SAP ?? DBNull.Value)
         );
 
         return (true, "Constancia DIGEMID regularizada exitosamente.");
