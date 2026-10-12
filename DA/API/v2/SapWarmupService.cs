@@ -26,31 +26,40 @@ namespace DA.API.v2
         {
             await FileLogger.Info("🚀 [Warm-up] Iniciando pre-calentamiento de sesión SAP...", "WARMUP");
 
+            bool exito = false;
             try
             {
                 // Consulta un endpoint OData liviano de solo 1 registro para forzar el login y mantener la conexión caliente.
-                await _sapClient.SendAsync(HttpMethod.Get, "Users?$top=1&$select=UserCode",
+                var (ok, _) = await _sapClient.SendAsync(HttpMethod.Get, "Users?$top=1&$select=UserCode",
                     payload: null,
                     cancellationToken: cancellationToken);
 
-                await FileLogger.Info("✅ [Warm-up] Sesión SAP pre-calentada. El primer usuario no esperará.", "WARMUP");
+                exito = ok;
+                if (exito)
+                {
+                    await FileLogger.Info("✅ [Warm-up] Sesión SAP pre-calentada. El primer usuario no esperará.", "WARMUP");
+                }
+                else
+                {
+                    await FileLogger.Warning("⚠️ [Warm-up] Intento inicial no devolvió éxito. Se reintentará en 30s.", "WARMUP");
+                }
             }
             catch (Exception ex)
             {
                 // El warm-up falla silenciosamente — la app sigue funcionando.
-                // El primer usuario tendrá el request lento, pero no es un error crítico.
                 await FileLogger.Warning($"⚠️ [Warm-up] No se pudo pre-calentar sesión SAP: {ex.Message}. " +
-                    "El primer request hará login normalmente.", "WARMUP");
+                    "Se reintentará en 30s.", "WARMUP");
             }
 
-            // Renovación proactiva cada 20 minutos (la sesión SAP expira a los 25-30 min)
+            // Si tuvo éxito, programar renovación regular cada 20 min. Si falló, reintentar calentamiento rápido en 30s.
+            var tiempoInicio = exito ? TimeSpan.FromMinutes(20) : TimeSpan.FromSeconds(30);
             _renewalTimer = new Timer(
                 callback: RenovarSesionSilenciosamente,
                 state: null,
-                dueTime: TimeSpan.FromMinutes(20),
+                dueTime: tiempoInicio,
                 period: TimeSpan.FromMinutes(20));
 
-            await FileLogger.Info("⏰ [Warm-up] Timer de renovación de sesión activo (cada 20 min).", "WARMUP");
+            await FileLogger.Info($"⏰ [Warm-up] Timer de renovación de sesión activo (primer chequeo en {(int)tiempoInicio.TotalSeconds}s, periodo: 20 min).", "WARMUP");
         }
 
         private async void RenovarSesionSilenciosamente(object? _)
@@ -58,8 +67,15 @@ namespace DA.API.v2
             try
             {
                 await FileLogger.Info("🔄 [Warm-up] Renovando sesión SAP proactivamente...", "WARMUP");
-                await _sapClient.SendAsync(HttpMethod.Get, "Users?$top=1&$select=UserCode");
-                await FileLogger.Info("✅ [Warm-up] Sesión SAP renovada.", "WARMUP");
+                var (ok, _) = await _sapClient.SendAsync(HttpMethod.Get, "Users?$top=1&$select=UserCode");
+                if (ok)
+                {
+                    await FileLogger.Info("✅ [Warm-up] Sesión SAP renovada exitosamente.", "WARMUP");
+                }
+                else
+                {
+                    await FileLogger.Warning("⚠️ [Warm-up] Intento de renovación no exitoso.", "WARMUP");
+                }
             }
             catch (Exception ex)
             {

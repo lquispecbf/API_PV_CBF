@@ -153,14 +153,14 @@ namespace DA.API.v2
             }
             catch (BrokenCircuitException ex)
             {
-                string msg = "SAP Service Layer temporalmente no disponible (Circuit Breaker ABIERTO). Intente en unos momentos.";
+                string msg = "El servicio de SAP se está inicializando o sincronizando. Por favor, espere unos segundos y vuelva a intentarlo.";
                 await FileLogger.Error($"🔴 [Circuit Breaker ABIERTO] {msg} - {ex.Message}", ctx);
                 return (false, msg);
             }
             catch (TimeoutRejectedException ex)
             {
-                string msg = $"Timeout en SAP Service Layer tras {_resilienciaOpts.MaxReintentos} reintentos.";
-                await FileLogger.Error($"⏱ {msg} - {ex.Message}", ctx);
+                string msg = "El servicio de SAP tardó más de lo esperado en responder. Por favor, vuelva a intentarlo en unos instantes.";
+                await FileLogger.Error($"⏱ [Timeout Polly] {msg} tras {_resilienciaOpts.MaxReintentos} reintentos - {ex.Message}", ctx);
                 return (false, msg);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

@@ -82,6 +82,7 @@ builder.Services.AddHttpClient(SapServiceClient.HttpClientName)
         ServerCertificateCustomValidationCallback = (_, _, _, _) => true
     });
 builder.Services.AddSingleton<ISapServiceClient, SapServiceClient>();
+builder.Services.AddHostedService<SapWarmupService>();
 
 // Ejecutores de BD
 builder.Services.AddScoped<ISqlExecutor, SqlExecutor>();

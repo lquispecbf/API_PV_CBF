@@ -57,32 +57,32 @@ namespace DA.Configuracion
     /// </summary>
     public class ServiceLayerResilienciaOptions
     {
-        /// <summary>Número máximo de reintentos automáticos ante fallos transitorios. Default: 3.</summary>
-        public int MaxReintentos { get; set; } = 3;
+        /// <summary>Número máximo de reintentos automáticos ante fallos transitorios. Default: 2.</summary>
+        public int MaxReintentos { get; set; } = 2;
 
         /// <summary>
         /// Timeout en segundos por cada intento individual (no el total).
         /// Si un PATCH tarda más de esto, se cancela y Polly reintenta.
-        /// Default: 30s.
+        /// Default: 45s.
         /// </summary>
-        public int TimeoutPorIntentoSegundos { get; set; } = 30;
+        public int TimeoutPorIntentoSegundos { get; set; } = 45;
 
         /// <summary>
         /// Mínimo de requests evaluados antes de que el Circuit Breaker pueda abrirse.
-        /// Evita falsos positivos con poco tráfico. Default: 5.
+        /// Evita falsos positivos con poco tráfico o cold start. Default: 12.
         /// </summary>
-        public int CircuitBreaker_MinRequests { get; set; } = 5;
+        public int CircuitBreaker_MinRequests { get; set; } = 12;
 
         /// <summary>
         /// Ventana de tiempo (segundos) en la que se cuentan los fallos para el Circuit Breaker.
-        /// Default: 30s.
+        /// Default: 60s.
         /// </summary>
-        public int CircuitBreaker_VentanaSegundos { get; set; } = 30;
+        public int CircuitBreaker_VentanaSegundos { get; set; } = 60;
 
         /// <summary>
         /// Segundos que el Circuit Breaker permanece ABIERTO antes de pasar a semi-abierto.
-        /// Durante este tiempo los requests fallan inmediatamente sin tocar SAP. Default: 60s.
+        /// Durante este tiempo los requests fallan inmediatamente sin tocar SAP. Default: 20s.
         /// </summary>
-        public int CircuitBreaker_DuracionAbiertaSegundos { get; set; } = 60;
+        public int CircuitBreaker_DuracionAbiertaSegundos { get; set; } = 20;
     }
 }
