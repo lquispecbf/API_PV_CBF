@@ -655,14 +655,14 @@ namespace API.Controllers
 
         [RequierePermisoModulo("PuntoVenta:Venta")]
         [HttpGet]
-        public async Task<IActionResult> Buscar_NotasCreditoCliente(string codigoCliente)
+        public async Task<IActionResult> Buscar_NotasCreditoCliente(string codigoCliente, int? docEntryPv = null, bool validarEnUso = true)
         {
             try
             {
                 if (string.IsNullOrWhiteSpace(codigoCliente))
                     return Ok(new List<NotaCreditoClienteSapDTO>());
 
-                var lista = await _puntoVenta.BuscarNotasCreditoCliente(codigoCliente);
+                var lista = await _puntoVenta.BuscarNotasCreditoCliente(codigoCliente, docEntryPv, validarEnUso);
 
                 return Ok(lista);
             }

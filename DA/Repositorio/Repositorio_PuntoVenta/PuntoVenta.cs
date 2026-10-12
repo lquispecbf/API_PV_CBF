@@ -394,33 +394,131 @@ public class PuntoVenta : IPuntoVenta
             ESTADO = reader.IsDBNull(ordEstado) ? null : reader.GetString(ordEstado)
         };
     }
-    public async Task<List<NotaCreditoClienteSapDTO>> BuscarNotasCreditoCliente(string codigoCliente)
+    public async Task<List<NotaCreditoClienteSapDTO>> BuscarNotasCreditoCliente(string codigoCliente, int? docEntryPv = null, bool validarEnUso = true)
     {
         var commandText = _hana.BuildProcedureCall("CBF_SP_PV_BUSCAR_NOTAS_CREDITO_CLIENTE", 1);
 
-        return await _hana.QueryListAsync(
+        var lista = await _hana.QueryListAsync(
             commandText,
             MapNotaCreditoClienteSap,
             CommandType.Text,
             _hana.CreateParameter("p1", codigoCliente)
         );
+
+        if (lista.Count == 0 || !validarEnUso) return lista;
+
+        try
+        {
+            const string sql = @"
+                SELECT DOCENTRY, ORIN_RECORD
+                FROM T_SK_ODOCS WITH (NOLOCK)
+                WHERE CARDCODE = @CARDCODE
+                  AND ISNULL(ORIN_RECORD, '') <> ''
+                  AND DOCSTATUS <> 'C'
+                  AND (@DOCENTRY_PV <= 0 OR DOCENTRY <> @DOCENTRY_PV)";
+
+            var ordenesConNc = await _sql.QueryListAsync(
+                sql,
+                reader => (
+                    DocEntry: reader.GetInt32(0),
+                    OrinRecord: reader.GetString(1)
+                ),
+                TipoConexionSql.POS,
+                CommandType.Text,
+                _sql.CreateParameter("@CARDCODE", codigoCliente),
+                _sql.CreateParameter("@DOCENTRY_PV", docEntryPv ?? 0)
+            );
+
+            if (ordenesConNc.Count > 0)
+            {
+                foreach (var orden in ordenesConNc)
+                {
+                    if (string.IsNullOrWhiteSpace(orden.OrinRecord)) continue;
+
+                    var partes = orden.OrinRecord.Split(';', StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var parte in partes)
+                    {
+                        var trimmed = parte.Trim();
+                        if (string.IsNullOrEmpty(trimmed)) continue;
+
+                        if (trimmed.Contains('|'))
+                        {
+                            // Nuevo formato: 1|DOCENTRY_NC|SALDO|NUMATCARD
+                            var tokens = trimmed.Split('|');
+                            if (tokens.Length >= 3)
+                            {
+                                var estadoActivo = tokens[0].Trim() == "1";
+                                if (!estadoActivo) continue; // Si fue desactivada (0), no bloquea
+
+                                var saldoStr = tokens[2].Trim().Replace(',', '.');
+                                if (int.TryParse(tokens[1].Trim(), out int docEntryNc) &&
+                                    decimal.TryParse(saldoStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out decimal saldoNc))
+                                {
+                                    foreach (var nc in lista)
+                                    {
+                                        if (nc.DOCENTRY == docEntryNc && Math.Abs(nc.SALDO - saldoNc) < 0.001m)
+                                        {
+                                            nc.EN_USO = true;
+                                            nc.DOCENTRY_ORDEN_USO = orden.DocEntry;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        else
+                        {
+                            // Formato anterior (retrocompatibilidad): DOCNUM.SALDO (donde saldo puede tener decimales, ej: 1403.11.71)
+                            var firstDot = trimmed.IndexOf('.');
+                            if (firstDot > 0 && firstDot < trimmed.Length - 1)
+                            {
+                                var docNumStr = trimmed.Substring(0, firstDot);
+                                var saldoStr = trimmed.Substring(firstDot + 1).Trim().Replace(',', '.');
+
+                                if (int.TryParse(docNumStr.Trim(), out int docNumNc) &&
+                                    decimal.TryParse(saldoStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out decimal saldoNc))
+                                {
+                                    foreach (var nc in lista)
+                                    {
+                                        if (nc.DOCNUM == docNumNc && Math.Abs(nc.SALDO - saldoNc) < 0.001m)
+                                        {
+                                            nc.EN_USO = true;
+                                            nc.DOCENTRY_ORDEN_USO = orden.DocEntry;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[BuscarNotasCreditoCliente] Error al verificar NC en uso en T_SK_ODOCS: {ex.Message}");
+        }
+
+        return lista;
     }
 
     private static NotaCreditoClienteSapDTO MapNotaCreditoClienteSap(DbDataReader reader)
     {
         int ordDocEntry = reader.GetOrdinal("DOCENTRY");
+        int ordNumAtCard = reader.GetOrdinal("NUMATCARD");
         int ordDocNum = reader.GetOrdinal("DOCNUM");
         int ordCodigoCliente = reader.GetOrdinal("CODIGO_CLIENTE");
         int ordFecha = reader.GetOrdinal("FECHA");
+        int ordSaldo = reader.GetOrdinal("SALDO");
         int ordTotal = reader.GetOrdinal("TOTAL");
         int ordMoneda = reader.GetOrdinal("MONEDA");
 
         return new NotaCreditoClienteSapDTO
         {
             DOCENTRY = reader.IsDBNull(ordDocEntry) ? 0 : Convert.ToInt32(reader[ordDocEntry]),
+            NUMATCARD = reader.IsDBNull(ordNumAtCard) ? null : Convert.ToString(reader[ordNumAtCard]),
             DOCNUM = reader.IsDBNull(ordDocNum) ? 0 : Convert.ToInt32(reader[ordDocNum]),
             CODIGO_CLIENTE = reader.IsDBNull(ordCodigoCliente) ? null : Convert.ToString(reader[ordCodigoCliente]),
             FECHA = reader.IsDBNull(ordFecha) ? null : Convert.ToString(reader[ordFecha]),
+            SALDO = reader.IsDBNull(ordSaldo) ? 0 : Convert.ToDecimal(reader[ordSaldo]),
             TOTAL = reader.IsDBNull(ordTotal) ? 0 : Convert.ToDecimal(reader[ordTotal]),
             MONEDA = reader.IsDBNull(ordMoneda) ? null : Convert.ToString(reader[ordMoneda])
         };
