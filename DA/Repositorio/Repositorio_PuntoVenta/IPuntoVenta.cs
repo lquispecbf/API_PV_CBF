@@ -22,6 +22,7 @@ public interface IPuntoVenta
     Task<bool> EsFormaPagoCredito(string? payForm);
     Task<(bool Valido, decimal Disponible, string? Mensaje)> ValidarLimiteCredito(string cardCode, string? payForm, decimal montoNeto, int? docEntrySap = null);
     Task<(bool Valido, string? Mensaje)> ValidarPreciosYPromociones(VentaGuardarRequestDTO request);
+    Task<(bool Valido, string? Mensaje)> ValidarNotasCreditoDisponibles(VentaGuardarRequestDTO request);
     Task<List<ArticuloAutocompleteDTO>> BuscarArticulosAutocomplete(string? textoBusqueda, int codigoListaPrecio, string codigoAlmacen);
     Task<List<ArticuloBusquedaSapDTO>> BuscarArticulosDescripcion(string? descripcion, string? codigo, string? laboratorio, string? principioActivo, int codigoListaPrecio, string codigoAlmacen, string? titularRs = null);
     Task<List<ArticuloBusquedaSapDTO>> BuscarArticulosPorCodigo(string codigoArticulo, int codigoListaPrecio, string codigoAlmacen);
@@ -84,4 +85,9 @@ public interface IPuntoVenta
     Task<VentaDigemidDTO?> ObtenerImagenDigemidPorDocEntry(int docEntry);
     Task<(bool Exito, string Mensaje)> RegularizarImagenDigemid(VentaDigemidRegularizarRequestDTO request);
     (byte[]? Bytes, string? ContentType) ObtenerArchivoImagenDigemid(string nombreArchivo);
+
+    // Activar / Inactivar Notas de Crédito
+    Task<string?> ObtenerOrinRecordOrden(int docEntry);
+    Task<(string? OrinRecord, string? DocStatus, string? EstadoEnvio, bool EsModificable)> ObtenerDatosNotasCreditoOrden(int docEntry);
+    Task<bool> ActualizarEstadoNotasCredito(int docEntry, string orinRecord);
 }

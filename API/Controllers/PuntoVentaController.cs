@@ -1234,6 +1234,16 @@ namespace API.Controllers
                     }
                 }
 
+                // Validación obligatoria de Notas de Crédito en Servidor (no en uso y disponibles en SAP)
+                var validacionNc = await _puntoVenta.ValidarNotasCreditoDisponibles(request);
+                if (!validacionNc.Valido)
+                {
+                    return BadRequest(new
+                    {
+                        error = validacionNc.Mensaje
+                    });
+                }
+
                 // Validación de Productos Controlados según Dirección de Envío (OWASP A04 - Server Side Validation)
                 // Se aplica cuando no es guardado en borrador (DOCSTATUS != "E")
                 if (!string.Equals(request.DOCSTATUS, "E", StringComparison.OrdinalIgnoreCase))
@@ -3429,6 +3439,95 @@ namespace API.Controllers
             var (bytes, contentType) = _puntoVenta.ObtenerArchivoImagenDigemid(nombreArchivo);
             if (bytes == null || bytes.Length == 0) return NotFound("No se encontró la imagen de la constancia DIGEMID.");
             return File(bytes, contentType ?? "image/png");
+        }
+
+        #endregion
+
+        #region Activar / Inactivar Notas de Crédito
+
+        [RequierePermisoModulo("PuntoVenta:Venta")]
+        [RequiereAccionPv(AccionesPvConstantes.VentaActivarInactivarNc)]
+        [HttpGet]
+        public async Task<IActionResult> ObtenerNotasCreditoOrden([FromQuery] int docEntry)
+        {
+            try
+            {
+                if (docEntry <= 0)
+                    return BadRequest(new { error = "El DocEntry es requerido." });
+
+                if (!await ValidarAccesoVendedor(docEntry))
+                    return StatusCode(403, new { error = "No tiene autorización para consultar notas de crédito de esta orden de venta." });
+
+                var datos = await _puntoVenta.ObtenerDatosNotasCreditoOrden(docEntry);
+                if (datos.DocStatus == null && datos.OrinRecord == null)
+                {
+                    return NotFound(new { error = $"No se encontró la orden de venta N° {docEntry}." });
+                }
+
+                return Ok(new
+                {
+                    success = true,
+                    docEntry,
+                    orinRecord = datos.OrinRecord ?? "",
+                    docStatus = datos.DocStatus ?? "",
+                    estadoEnvio = datos.EstadoEnvio ?? "",
+                    esModificable = datos.EsModificable
+                });
+            }
+            catch (Exception ex)
+            {
+                await _errores.Insertar_Exception(ex);
+                return StatusCode(500, new { error = $"Error al obtener notas de crédito de la orden: {ex.Message}" });
+            }
+        }
+
+        [RequierePermisoModulo("PuntoVenta:Venta")]
+        [RequiereAccionPv(AccionesPvConstantes.VentaActivarInactivarNc)]
+        [HttpPost]
+        public async Task<IActionResult> ActualizarEstadoNotasCredito([FromBody] ActualizarEstadoNcRequestDTO request)
+        {
+            try
+            {
+                if (request == null || request.DocEntry <= 0)
+                    return BadRequest(new { error = "DocEntry inválido." });
+
+                if (!await ValidarAccesoVendedor(request.DocEntry))
+                    return StatusCode(403, new { error = "No tiene autorización para modificar notas de crédito de esta orden de venta." });
+
+                if (request.OrinRecord != null && request.OrinRecord.Length > 254)
+                    return BadRequest(new { error = "El formato de notas de crédito excede la longitud permitida (254 caracteres)." });
+
+                // Validación de formato seguro para ORIN_RECORD: ESTADO|DOCENTRY_NC|SALDO|NUMATCARD;
+                if (!string.IsNullOrWhiteSpace(request.OrinRecord))
+                {
+                    var tokens = request.OrinRecord.Split(';', StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var token in tokens)
+                    {
+                        var parts = token.Split('|');
+                        if (parts.Length < 4)
+                            return BadRequest(new { error = "Formato de notas de crédito inválido." });
+
+                        var estado = parts[0].Trim();
+                        if (estado != "0" && estado != "1")
+                            return BadRequest(new { error = "Estado de nota de crédito no permitido (debe ser 0 o 1)." });
+
+                        if (!int.TryParse(parts[1].Trim(), out int ncDocEntry) || ncDocEntry <= 0)
+                            return BadRequest(new { error = "DocEntry de nota de crédito inválido en el registro." });
+                    }
+                }
+
+                var ok = await _puntoVenta.ActualizarEstadoNotasCredito(request.DocEntry, request.OrinRecord);
+                return Ok(new { success = ok, message = ok ? "Estado de notas de crédito actualizado exitosamente." : "No se encontró el registro para actualizar." });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                await _errores.Insertar_Exception(ex);
+                return StatusCode(500, new { error = $"Error al actualizar estado de notas de crédito: {ex.Message}" });
+            }
         }
 
         #endregion

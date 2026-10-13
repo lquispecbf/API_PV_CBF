@@ -12,6 +12,7 @@ namespace BE.Seguridad
         public const string VentaReabrir = "VENTA.REABRIR";
         public const string VentaModificarCondPago = "VENTA.MODIFICAR_COND_PAGO";
         public const string VentaModificarCondPagoCobranza = "VENTA.MODIFICAR_COND_PAGO_COBRANZA";
+        public const string VentaActivarInactivarNc = "VENTA.ACTIVAR_INACTIVAR_NC";
         public const string VentaMantenerSesion = "VENTA.MANTENER_SESION";
         public const string VentaImprimir = "VENTA.IMPRIMIR";
         public const string VentaExportarExcel = "VENTA.EXPORTAR_EXCEL";

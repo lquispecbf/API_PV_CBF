@@ -13,6 +13,7 @@ public class VentaGuardarRequestDTO
     public string? LICTRADNUM { get; set; }
     public string? COMMENTS { get; set; }
     public string? ORIN_RECORD { get; set; } = string.Empty;
+    public string? NOTA_CREDITO { get; set; } = string.Empty;
     public decimal ORIN_TOTAL { get; set; }
     public decimal IMP_DELIVERY { get; set; }
     public decimal IMP_DSCTO { get; set; }

@@ -33,6 +33,7 @@ public class VentaCargarResponseDTO
     public string? SEND_PLACE { get; set; }
     public decimal ORIN_TOTAL { get; set; }
     public string? ORIN_RECORD { get; set; }
+    public string? NOTA_CREDITO { get; set; }
     public string? DOCSTATUS { get; set; }
     public string? SENDSTATUS { get; set; }
     public int? DOCENTRY_SAP { get; set; }
