@@ -47,6 +47,7 @@ namespace DA.API.v2
         private static readonly SemaphoreSlim _loginLock = new(1, 1);
         private static readonly CookieContainer _cookieContainer = new();
         private static string? _sessionId;
+        private static string? _routeId;
         private static DateTime _lastLogin = DateTime.MinValue;
 
         /// <summary>
@@ -103,7 +104,7 @@ namespace DA.API.v2
                         }
 
                         request.Headers.TryAddWithoutValidation("If-Match", "*");
-                        request.Headers.TryAddWithoutValidation("Cookie", $"B1SESSION={_sessionId}; CompanyDB={Uri.EscapeDataString(_companyDB)}");
+                        request.Headers.TryAddWithoutValidation("Cookie", ConstruirHeaderCookies());
 
                         await FileLogger.Info($"➡️ {method} {_serviceLayerBase}{endpoint}", ctx);
                         var startTime = DateTime.Now;
@@ -119,6 +120,7 @@ namespace DA.API.v2
                             lock (_lock)
                             {
                                 _sessionId = null;
+                                _routeId = null;
                                 _lastLogin = DateTime.MinValue;
                             }
                         }
@@ -238,7 +240,7 @@ namespace DA.API.v2
 
             var client = _httpClientFactory.CreateClient(HttpClientName);
             using var batchRequest = new HttpRequestMessage(HttpMethod.Post, _serviceLayerBase + "$batch");
-            batchRequest.Headers.TryAddWithoutValidation("Cookie", $"B1SESSION={_sessionId}; CompanyDB={Uri.EscapeDataString(_companyDB)}");
+            batchRequest.Headers.TryAddWithoutValidation("Cookie", ConstruirHeaderCookies());
             batchRequest.Content = new StringContent(batchBody.ToString(), Encoding.UTF8, $"multipart/mixed; boundary={boundary}");
 
             await FileLogger.Info($"➡️ POST $batch con {requestList.Count} operaciones", ctx);
@@ -317,19 +319,27 @@ namespace DA.API.v2
                     throw new HttpRequestException(msg, null, resp.StatusCode);
                 }
 
-                // Obtener B1SESSION desde CookieContainer
+                // Obtener B1SESSION y ROUTEID desde CookieContainer
                 var cookies = _cookieContainer.GetCookies(new Uri(_serviceLayerBase));
                 string? sessionCookie = cookies["B1SESSION"]?.Value;
+                string? routeCookie = cookies["ROUTEID"]?.Value;
 
                 // Fallback: parsear Set-Cookie header manualmente
-                if (string.IsNullOrEmpty(sessionCookie))
+                if (resp.Headers.TryGetValues("Set-Cookie", out var setCookies))
                 {
-                    if (resp.Headers.TryGetValues("Set-Cookie", out var setCookies))
+                    var joined = string.Join(";", setCookies);
+                    if (string.IsNullOrEmpty(sessionCookie))
                     {
-                        var joined = string.Join(";", setCookies);
-                        var m = Regex.Match(joined, "B1SESSION=([^;]+)");
-                        if (m.Success)
-                            sessionCookie = m.Groups[1].Value;
+                        var mSession = Regex.Match(joined, @"B1SESSION=([^;]+)");
+                        if (mSession.Success)
+                            sessionCookie = mSession.Groups[1].Value;
+                    }
+
+                    if (string.IsNullOrEmpty(routeCookie))
+                    {
+                        var mRoute = Regex.Match(joined, @"ROUTEID=([^;]+)");
+                        if (mRoute.Success)
+                            routeCookie = mRoute.Groups[1].Value;
                     }
                 }
 
@@ -342,15 +352,31 @@ namespace DA.API.v2
                 lock (_lock)
                 {
                     _sessionId = sessionCookie;
+                    _routeId = routeCookie;
                     _lastLogin = DateTime.Now;
                 }
 
-                await FileLogger.Info($"✅ Login exitoso. SessionID: {MascararValor(_sessionId)}", "LOGIN2");
+                await FileLogger.Info($"✅ Login exitoso. SessionID: {MascararValor(_sessionId)} | RouteID: {MascararValor(_routeId)}", "LOGIN2");
             }
             finally
             {
                 _loginLock.Release();
             }
+        }
+
+        private string ConstruirHeaderCookies()
+        {
+            var sb = new StringBuilder();
+            if (!string.IsNullOrWhiteSpace(_sessionId))
+            {
+                sb.Append($"B1SESSION={_sessionId}; ");
+            }
+            if (!string.IsNullOrWhiteSpace(_routeId))
+            {
+                sb.Append($"ROUTEID={_routeId}; ");
+            }
+            sb.Append($"CompanyDB={Uri.EscapeDataString(_companyDB)}");
+            return sb.ToString();
         }
 
         // ════════════════════════════════════════════════════════════════════════

@@ -15,6 +15,7 @@ namespace DA.API.v2
     public class SapWarmupService : IHostedService, IDisposable
     {
         private readonly ISapServiceClient _sapClient;
+        private readonly CancellationTokenSource _cts = new();
         private Timer? _renewalTimer;
 
         public SapWarmupService(ISapServiceClient sapClient)
@@ -22,52 +23,76 @@ namespace DA.API.v2
             _sapClient = sapClient;
         }
 
-        public async Task StartAsync(CancellationToken cancellationToken)
+        public Task StartAsync(CancellationToken cancellationToken)
         {
-            await FileLogger.Info("🚀 [Warm-up] Iniciando pre-calentamiento de sesión SAP...", "WARMUP");
+            // 🚀 IMPORTANTE PARA IIS:
+            // No bloquear StartAsync. Si SAP está frío o apagado, el pipeline de reintentos
+            // demoraría hasta 140s, provocando que IIS marque w3wp.exe como colgado.
+            // Se desacopla a una tarea en background.
+            _ = Task.Run(async () => await EjecutarWarmupInicialAsync(_cts.Token), CancellationToken.None);
+
+            return Task.CompletedTask;
+        }
+
+        private async Task EjecutarWarmupInicialAsync(CancellationToken ct)
+        {
+            await FileLogger.Info("🚀 [Warm-up] Iniciando pre-calentamiento en background...", "WARMUP");
 
             bool exito = false;
             try
             {
-                // Consulta un endpoint OData liviano de solo 1 registro para forzar el login y mantener la conexión caliente.
-                var (ok, _) = await _sapClient.SendAsync(HttpMethod.Get, "Users?$top=1&$select=UserCode",
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
+
+                var (ok, _) = await _sapClient.SendAsync(
+                    HttpMethod.Get,
+                    "Users?$top=1&$select=UserCode",
                     payload: null,
-                    cancellationToken: cancellationToken);
+                    cancellationToken: timeoutCts.Token);
 
                 exito = ok;
                 if (exito)
                 {
-                    await FileLogger.Info("✅ [Warm-up] Sesión SAP pre-calentada. El primer usuario no esperará.", "WARMUP");
+                    await FileLogger.Info("✅ [Warm-up] Sesión SAP pre-calentada exitosamente.", "WARMUP");
                 }
                 else
                 {
-                    await FileLogger.Warning("⚠️ [Warm-up] Intento inicial no devolvió éxito. Se reintentará en 30s.", "WARMUP");
+                    await FileLogger.Warning("⚠️ [Warm-up] Intento inicial no devolvió éxito. Se reintentará en 60s.", "WARMUP");
                 }
             }
             catch (Exception ex)
             {
-                // El warm-up falla silenciosamente — la app sigue funcionando.
-                await FileLogger.Warning($"⚠️ [Warm-up] No se pudo pre-calentar sesión SAP: {ex.Message}. " +
-                    "Se reintentará en 30s.", "WARMUP");
+                await FileLogger.Warning($"⚠️ [Warm-up] No se pudo pre-calentar sesión SAP: {ex.Message}. Se reintentará en 60s.", "WARMUP");
             }
 
-            // Si tuvo éxito, programar renovación regular cada 20 min. Si falló, reintentar calentamiento rápido en 30s.
-            var tiempoInicio = exito ? TimeSpan.FromMinutes(20) : TimeSpan.FromSeconds(30);
+            if (ct.IsCancellationRequested) return;
+
+            var tiempoInicio = exito ? TimeSpan.FromMinutes(20) : TimeSpan.FromSeconds(60);
             _renewalTimer = new Timer(
-                callback: RenovarSesionSilenciosamente,
+                callback: _ => _ = RenovarSesionSeguraAsync(),
                 state: null,
                 dueTime: tiempoInicio,
                 period: TimeSpan.FromMinutes(20));
 
-            await FileLogger.Info($"⏰ [Warm-up] Timer de renovación de sesión activo (primer chequeo en {(int)tiempoInicio.TotalSeconds}s, periodo: 20 min).", "WARMUP");
+            await FileLogger.Info($"⏰ [Warm-up] Timer activo (primer chequeo en {(int)tiempoInicio.TotalSeconds}s, periodo: 20 min).", "WARMUP");
         }
 
-        private async void RenovarSesionSilenciosamente(object? _)
+        private async Task RenovarSesionSeguraAsync()
         {
+            if (_cts.IsCancellationRequested) return;
+
             try
             {
                 await FileLogger.Info("🔄 [Warm-up] Renovando sesión SAP proactivamente...", "WARMUP");
-                var (ok, _) = await _sapClient.SendAsync(HttpMethod.Get, "Users?$top=1&$select=UserCode");
+
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+                timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
+
+                var (ok, _) = await _sapClient.SendAsync(
+                    HttpMethod.Get,
+                    "Users?$top=1&$select=UserCode",
+                    cancellationToken: timeoutCts.Token);
+
                 if (ok)
                 {
                     await FileLogger.Info("✅ [Warm-up] Sesión SAP renovada exitosamente.", "WARMUP");
@@ -85,13 +110,16 @@ namespace DA.API.v2
 
         public Task StopAsync(CancellationToken cancellationToken)
         {
+            _cts.Cancel();
             _renewalTimer?.Change(Timeout.Infinite, 0);
             return Task.CompletedTask;
         }
 
         public void Dispose()
         {
+            _cts.Cancel();
             _renewalTimer?.Dispose();
+            _cts.Dispose();
         }
     }
 }
