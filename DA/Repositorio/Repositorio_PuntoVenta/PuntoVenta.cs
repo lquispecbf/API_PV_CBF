@@ -409,23 +409,15 @@ public class PuntoVenta : IPuntoVenta
 
         try
         {
-            const string sql = @"
-                SELECT DOCENTRY, ISNULL(ORIN_RECORD, ''), ISNULL(NOTA_CREDITO, '')
-                FROM T_SK_ODOCS WITH (NOLOCK)
-                WHERE CARDCODE = @CARDCODE
-                  AND (ISNULL(ORIN_RECORD, '') <> '' OR ISNULL(NOTA_CREDITO, '') <> '')
-                  AND DOCSTATUS <> 'C'
-                  AND (@DOCENTRY_PV <= 0 OR DOCENTRY <> @DOCENTRY_PV)";
-
             var ordenesConNc = await _sql.QueryListAsync(
-                sql,
+                "dbo.CBF_SP_PV_OBTENER_NCS_ACTIVAS_CLIENTE",
                 reader => (
                     DocEntry: reader.GetInt32(0),
-                    OrinRecord: reader.GetString(1),
-                    NotaCredito: reader.GetString(2)
+                    OrinRecord: reader.GetString(2),
+                    NotaCredito: reader.GetString(3)
                 ),
                 TipoConexionSql.POS,
-                CommandType.Text,
+                CommandType.StoredProcedure,
                 _sql.CreateParameter("@CARDCODE", codigoCliente),
                 _sql.CreateParameter("@DOCENTRY_PV", docEntryPv ?? 0)
             );
@@ -503,10 +495,13 @@ public class PuntoVenta : IPuntoVenta
                             var limpio = ncTexto.Trim();
                             if (string.IsNullOrEmpty(limpio)) continue;
 
+                            // Si viene con formato NUMATCARD;MONTO_C, aislar NUMATCARD
+                            var numAtCardOrden = limpio.Split(';')[0].Trim();
+
                             foreach (var nc in lista)
                             {
                                 var numAtCardNc = LimpiarPrefijoNumAtCard(nc.NUMATCARD);
-                                if (!string.IsNullOrEmpty(numAtCardNc) && string.Equals(numAtCardNc, LimpiarPrefijoNumAtCard(limpio), StringComparison.OrdinalIgnoreCase))
+                                if (!string.IsNullOrEmpty(numAtCardNc) && string.Equals(numAtCardNc, LimpiarPrefijoNumAtCard(numAtCardOrden), StringComparison.OrdinalIgnoreCase))
                                 {
                                     nc.EN_USO = true;
                                     nc.DOCENTRY_ORDEN_USO = orden.DocEntry;
@@ -886,9 +881,11 @@ public class PuntoVenta : IPuntoVenta
                 var trimmed = p.Trim();
                 if (!string.IsNullOrEmpty(trimmed))
                 {
-                    if (!ncsRequest.Any(x => LimpiarPrefijoNumAtCard(x.NumAtCard).Equals(LimpiarPrefijoNumAtCard(trimmed), StringComparison.OrdinalIgnoreCase)))
+                    // Si viene NUMATCARD;MONTO_C, aislar NUMATCARD
+                    var numAtCardOnly = trimmed.Split(';')[0].Trim();
+                    if (!ncsRequest.Any(x => LimpiarPrefijoNumAtCard(x.NumAtCard).Equals(LimpiarPrefijoNumAtCard(numAtCardOnly), StringComparison.OrdinalIgnoreCase)))
                     {
-                        ncsRequest.Add((0, trimmed, 0));
+                        ncsRequest.Add((0, numAtCardOnly, 0));
                     }
                 }
             }
@@ -913,16 +910,8 @@ public class PuntoVenta : IPuntoVenta
         // 2. Validar contra T_SK_ODOCS (otras órdenes activas en Punto de Venta)
         try
         {
-            const string sql = @"
-                SELECT DOCENTRY, CARDCODE, ISNULL(ORIN_RECORD, ''), ISNULL(NOTA_CREDITO, '')
-                FROM T_SK_ODOCS WITH (NOLOCK)
-                WHERE CARDCODE = @CARDCODE
-                  AND (ISNULL(ORIN_RECORD, '') <> '' OR ISNULL(NOTA_CREDITO, '') <> '')
-                  AND DOCSTATUS <> 'C'
-                  AND (@DOCENTRY_PV <= 0 OR DOCENTRY <> @DOCENTRY_PV)";
-
             var ordenesActivas = await _sql.QueryListAsync(
-                sql,
+                "dbo.CBF_SP_PV_OBTENER_NCS_ACTIVAS_CLIENTE",
                 reader => (
                     DocEntry: reader.GetInt32(0),
                     CardCode: reader.GetString(1),
@@ -930,7 +919,7 @@ public class PuntoVenta : IPuntoVenta
                     NotaCredito: reader.GetString(3)
                 ),
                 TipoConexionSql.POS,
-                CommandType.Text,
+                CommandType.StoredProcedure,
                 _sql.CreateParameter("@CARDCODE", (object?)request.CARDCODE ?? string.Empty),
                 _sql.CreateParameter("@DOCENTRY_PV", request.DOCENTRY)
             );
@@ -977,7 +966,10 @@ public class PuntoVenta : IPuntoVenta
                     var ncsTexto = orden.NotaCredito.Split('|', StringSplitOptions.RemoveEmptyEntries);
                     foreach (var ncTexto in ncsTexto)
                     {
-                        var limpio = LimpiarPrefijoNumAtCard(ncTexto.Trim());
+                        var item = ncTexto.Trim();
+                        if (string.IsNullOrEmpty(item)) continue;
+                        var numAtCardOnly = item.Split(';')[0].Trim();
+                        var limpio = LimpiarPrefijoNumAtCard(numAtCardOnly);
                         if (string.IsNullOrEmpty(limpio)) continue;
 
                         foreach (var reqNc in ncsRequest)
@@ -985,7 +977,7 @@ public class PuntoVenta : IPuntoVenta
                             var reqLimpio = LimpiarPrefijoNumAtCard(reqNc.NumAtCard);
                             if (!string.IsNullOrEmpty(reqLimpio) && reqLimpio.Equals(limpio, StringComparison.OrdinalIgnoreCase))
                             {
-                                return (false, $"La nota de crédito \"{ncTexto.Trim()}\" ya está siendo utilizada en la orden N° {orden.DocEntry}. No se puede guardar la venta.");
+                                return (false, $"La nota de crédito \"{numAtCardOnly}\" ya está siendo utilizada en la orden N° {orden.DocEntry}. No se puede guardar la venta.");
                             }
                         }
                     }
@@ -1964,41 +1956,50 @@ public class PuntoVenta : IPuntoVenta
 
     private static string? FormatearColumnaNotaCredito(string? notaCredito, string? orinRecord)
     {
-        if (!string.IsNullOrWhiteSpace(notaCredito))
+        // 1. Si disponemos de ORIN_RECORD (fuente de verdad de las NCs seleccionadas al guardar la venta),
+        // construimos la columna NOTA_CREDITO con formato: NUMATCARD;MONTO_C| tomando siempre todo después del primer '-'
+        if (!string.IsNullOrWhiteSpace(orinRecord))
         {
-            return TruncarTexto(notaCredito.Trim(), 250);
-        }
-
-        if (string.IsNullOrWhiteSpace(orinRecord)) return null;
-
-        // Fallback defensivo a partir de ORIN_RECORD si notaCredito no vino explícita
-        try
-        {
-            var partes = orinRecord.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
-            var lista = new List<string>();
-            foreach (var parte in partes)
+            try
             {
-                if (string.IsNullOrWhiteSpace(parte)) continue;
-                if (parte.Contains('|'))
+                var partes = orinRecord.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
+                var lista = new List<string>();
+                foreach (var parte in partes)
                 {
-                    // Formato: 1|DOCENTRY|SALDO|NUMATCARD
-                    var cols = parte.Split('|');
-                    if (cols.Length >= 4 && cols[0].Trim() == "1")
+                    if (string.IsNullOrWhiteSpace(parte)) continue;
+                    if (parte.Contains('|'))
                     {
-                        var numAtCard = cols[3].Trim();
-                        var limpio = LimpiarPrefijoNumAtCard(numAtCard);
-                        if (!string.IsNullOrEmpty(limpio)) lista.Add(limpio);
+                        // Formato: ESTADO|DOCENTRY|SALDO|NUMATCARD
+                        var cols = parte.Split('|');
+                        if (cols.Length >= 4)
+                        {
+                            if (cols[0].Trim() == "0") continue; // Si la NC está desactivada, no se incluye
+                            var saldoStr = cols[2].Trim().Replace(',', '.');
+                            decimal.TryParse(saldoStr, NumberStyles.Any, CultureInfo.InvariantCulture, out decimal saldo);
+                            var numAtCard = cols[3].Trim();
+                            var limpio = LimpiarPrefijoNumAtCard(numAtCard);
+                            if (!string.IsNullOrEmpty(limpio))
+                            {
+                                lista.Add($"{limpio};{saldo.ToString("0.00", CultureInfo.InvariantCulture)}");
+                            }
+                        }
                     }
                 }
+                if (lista.Count > 0)
+                {
+                    return TruncarTexto(string.Join("|", lista) + "|", 200);
+                }
             }
-            if (lista.Count > 0)
+            catch
             {
-                return TruncarTexto(string.Join("|", lista) + "|", 250);
+                // Fallback silencioso si el formato no coincide
             }
         }
-        catch
+
+        // 2. Si vino notaCredito explícito y no hubo orinRecord
+        if (!string.IsNullOrWhiteSpace(notaCredito))
         {
-            // Fallback silencioso si el formato no coincide
+            return TruncarTexto(notaCredito.Trim(), 200);
         }
 
         return null;
@@ -2007,16 +2008,9 @@ public class PuntoVenta : IPuntoVenta
     private static string LimpiarPrefijoNumAtCard(string numAtCard)
     {
         if (string.IsNullOrWhiteSpace(numAtCard)) return string.Empty;
-        var partes = numAtCard.Trim().Split('-');
-        if (partes.Length >= 3)
-        {
-            return string.Join("-", partes.Skip(1)).Trim();
-        }
-        if (partes.Length == 2 && partes[0].Length <= 2)
-        {
-            return partes[1].Trim();
-        }
-        return numAtCard.Trim();
+        var s = numAtCard.Trim();
+        var idx = s.IndexOf('-');
+        return idx >= 0 ? s.Substring(idx + 1).Trim() : s;
     }
 
     private async Task<int> InsertarCabecera(SqlConnection con, SqlTransaction tran, VentaGuardarRequestDTO request)
