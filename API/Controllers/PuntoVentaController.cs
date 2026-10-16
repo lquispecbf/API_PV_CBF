@@ -1363,13 +1363,18 @@ namespace API.Controllers
                     // Si el cliente tiene RUC (11 dígitos) y NO pertenece al grupo 121 (OTRO), DIGEMID es estrictamente obligatorio
                     if (rucLimpio.Length == 11 && groupCode != 121)
                     {
-                        bool tieneDigemidValido = request.DIGEMID != null &&
-                            (!string.IsNullOrWhiteSpace(request.DIGEMID.IMAGEN_BASE64) || request.DIGEMID.ID_DIGEMID_PV > 0);
+                        bool esContingencia = request.DIGEMID != null && (
+                            request.DIGEMID.REQUIERE_REGULARIZACION ||
+                            string.Equals(request.DIGEMID.ESTADO_SERVICIO_DIGEMID, "CONTINGENCIA", StringComparison.OrdinalIgnoreCase)
+                        );
+
+                        bool tieneDigemidValido = esContingencia || (request.DIGEMID != null &&
+                            (!string.IsNullOrWhiteSpace(request.DIGEMID.IMAGEN_BASE64) || request.DIGEMID.ID_DIGEMID_PV > 0));
 
                         if (!tieneDigemidValido && request.DOCENTRY > 0)
                         {
                             var digemidExistente = await _puntoVenta.ObtenerImagenDigemidPorDocEntry(request.DOCENTRY);
-                            if (digemidExistente != null && digemidExistente.ID_DIGEMID_PV > 0)
+                            if (digemidExistente != null && (digemidExistente.ID_DIGEMID_PV > 0 || digemidExistente.REQUIERE_REGULARIZACION))
                             {
                                 tieneDigemidValido = true;
                             }
