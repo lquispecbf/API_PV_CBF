@@ -4262,7 +4262,7 @@ public class PuntoVenta : IPuntoVenta
 
         // 2. Ejecutar actualización exclusiva de ORIN_RECORD
         var dt = await _sql.QueryDataTableAsync(
-            "dbo.SOPH_SP_UPD_ESTADO_NC_SKODOCS",
+            "dbo.CBF_SP_PV_ACTUALIZAR_ESTADO_NC_SKODOCS",
             TipoConexionSql.POS,
             CommandType.StoredProcedure,
             _sql.CreateParameter("@DOCENTRY", docEntry),
