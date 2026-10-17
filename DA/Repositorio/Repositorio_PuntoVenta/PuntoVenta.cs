@@ -414,7 +414,8 @@ public class PuntoVenta : IPuntoVenta
                 reader => (
                     DocEntry: reader.GetInt32(0),
                     OrinRecord: reader.GetString(2),
-                    NotaCredito: reader.GetString(3)
+                    NotaCredito: reader.GetString(3),
+                    DocNumSap: reader.FieldCount > 4 && !reader.IsDBNull(4) ? reader.GetString(4) : string.Empty
                 ),
                 TipoConexionSql.POS,
                 CommandType.StoredProcedure,
@@ -457,6 +458,7 @@ public class PuntoVenta : IPuntoVenta
                                         {
                                             nc.EN_USO = true;
                                             nc.DOCENTRY_ORDEN_USO = orden.DocEntry;
+                                            nc.DOCNUM_SAP_ORDEN_USO = !string.IsNullOrWhiteSpace(orden.DocNumSap) ? orden.DocNumSap.Trim() : null;
                                         }
                                     }
                                 }
@@ -479,6 +481,7 @@ public class PuntoVenta : IPuntoVenta
                                             {
                                                 nc.EN_USO = true;
                                                 nc.DOCENTRY_ORDEN_USO = orden.DocEntry;
+                                                nc.DOCNUM_SAP_ORDEN_USO = !string.IsNullOrWhiteSpace(orden.DocNumSap) ? orden.DocNumSap.Trim() : null;
                                             }
                                         }
                                     }
@@ -505,6 +508,7 @@ public class PuntoVenta : IPuntoVenta
                                 {
                                     nc.EN_USO = true;
                                     nc.DOCENTRY_ORDEN_USO = orden.DocEntry;
+                                    nc.DOCNUM_SAP_ORDEN_USO = !string.IsNullOrWhiteSpace(orden.DocNumSap) ? orden.DocNumSap.Trim() : null;
                                 }
                             }
                         }

@@ -12,4 +12,5 @@ public class NotaCreditoClienteSapDTO
     public string? MONEDA { get; set; }
     public bool EN_USO { get; set; }
     public int? DOCENTRY_ORDEN_USO { get; set; }
+    public string? DOCNUM_SAP_ORDEN_USO { get; set; }
 }
