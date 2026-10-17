@@ -108,7 +108,7 @@ namespace BL.Servicios
                 using var response = await client.GetAsync(url);
                 var html = await response.Content.ReadAsStringAsync();
 
-                // Detección de bloqueo por Cloudflare (Rate Limit / Error 1015 / 429)
+                // Detección de bloqueo o limitación por Cloudflare (Rate Limit / Error 1015 / 429)
                 if (response.StatusCode == (HttpStatusCode)429 || 
                     (html != null && (html.Contains("Error 1015") || html.Contains("rate limited") || html.Contains("temporarily from accessing"))))
                 {
@@ -117,18 +117,30 @@ namespace BL.Servicios
                     {
                         Success = false,
                         Ruc = rucLimpio,
-                        Error = "El portal de DIGEMID se encuentra temporalmente ocupado o limitando consultas por alto tráfico. Por favor, volver a consultar."
+                        Error = "El portal de DIGEMID se encuentra temporalmente ocupado o limitando consultas por alto tráfico (Rate Limit). Por favor, volver a consultar."
                     };
                 }
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    _logger.LogWarning("Portal DIGEMID respondió con HTTP {StatusCode} para RUC {Ruc}", response.StatusCode, rucLimpio);
+                    int statusCode = (int)response.StatusCode;
+                    string statusDesc = response.StatusCode switch
+                    {
+                        HttpStatusCode.NotFound => "404 (Página no encontrada / Servicio no disponible)",
+                        HttpStatusCode.InternalServerError => "500 (Internal Server Error)",
+                        HttpStatusCode.BadGateway => "502 (Bad Gateway)",
+                        HttpStatusCode.ServiceUnavailable => "503 (Servicio no disponible)",
+                        HttpStatusCode.GatewayTimeout => "504 (Tiempo de espera agotado en pasarela)",
+                        HttpStatusCode.Forbidden => "403 (Acceso restringido / Bloqueado)",
+                        _ => $"{statusCode} ({response.StatusCode})"
+                    };
+
+                    _logger.LogWarning("Portal DIGEMID respondió con HTTP {StatusDesc} para RUC {Ruc}", statusDesc, rucLimpio);
                     return new DigemidConsultaResponseDTO
                     {
                         Success = false,
                         Ruc = rucLimpio,
-                        Error = $"El servidor de DIGEMID respondió con estado HTTP {(int)response.StatusCode}."
+                        Error = $"El servidor de DIGEMID respondió con estado HTTP {statusDesc}."
                     };
                 }
 
@@ -141,7 +153,7 @@ namespace BL.Servicios
                 {
                     Success = false,
                     Ruc = rucLimpio,
-                    Error = "El portal de DIGEMID tardó demasiado en responder (Tiempo de espera agotado). Intente nuevamente."
+                    Error = "El portal de DIGEMID tardó demasiado en responder (Tiempo de espera agotado / Timeout). Intente nuevamente."
                 };
             }
             catch (Exception ex)
@@ -151,7 +163,7 @@ namespace BL.Servicios
                 {
                     Success = false,
                     Ruc = rucLimpio,
-                    Error = "No se pudo comunicar con el portal de DIGEMID. Por favor, intente nuevamente."
+                    Error = "No se pudo comunicar con el portal de DIGEMID (Falla de conexión o red). Por favor, intente nuevamente."
                 };
             }
             finally
@@ -162,6 +174,29 @@ namespace BL.Servicios
 
         private static DigemidConsultaResponseDTO ParsearRespuestaDigemid(string html, string ruc)
         {
+            if (string.IsNullOrWhiteSpace(html))
+            {
+                return new DigemidConsultaResponseDTO
+                {
+                    Success = false,
+                    Ruc = ruc,
+                    Error = "No se recibió respuesta del portal de DIGEMID."
+                };
+            }
+
+            // Detección de pantallas de bloqueo o captcha de Cloudflare que devuelven HTTP 200
+            if (html.Contains("cf-browser-verification") || html.Contains("challenge-platform") ||
+                html.Contains("Just a moment...") || html.Contains("Attention Required") ||
+                html.Contains("Access denied") || (html.Contains("Cloudflare") && !html.Contains("tresultados")))
+            {
+                return new DigemidConsultaResponseDTO
+                {
+                    Success = false,
+                    Ruc = ruc,
+                    Error = "El portal de DIGEMID se encuentra temporalmente protegido o limitando accesos por seguridad (Cloudflare / Rate Limit)."
+                };
+            }
+
             var response = new DigemidConsultaResponseDTO
             {
                 Success = true,
