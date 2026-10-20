@@ -405,6 +405,116 @@ public class PuntoVenta : IPuntoVenta
             _hana.CreateParameter("p1", codigoCliente)
         );
 
+        // Si docEntryPv > 0 (estamos en "VER" o "REABRIR" de una orden existente),
+        // verificar si la orden consultada utilizó alguna NC que ya esté cerrada en SAP (DocStatus = 'C').
+        // De ser así, se debe recuperar de SAP y agregarse a la lista para que se muestre en pantalla y cuadre el total.
+        if (docEntryPv.HasValue && docEntryPv.Value > 0)
+        {
+            try
+            {
+                var ordenActual = await _sql.QuerySingleOrDefaultAsync(
+                    @"SELECT ISNULL(ORIN_RECORD, '') AS ORIN_RECORD, 
+                             ISNULL(NOTA_CREDITO, '') AS NOTA_CREDITO, 
+                             ISNULL(DOCNUM_SAP, '') AS DOCNUM_SAP,
+                             ISNULL(CONVERT(VARCHAR(10), DOCDATE, 103), '') AS DOCDATE
+                      FROM T_SK_ODOCS WITH (NOLOCK) 
+                      WHERE DOCENTRY = @DOCENTRY",
+                    reader => new OrdenEstadoNcDTO
+                    {
+                        OrinRecord = reader.GetString(0),
+                        NotaCredito = reader.GetString(1),
+                        DocNumSap = reader.GetString(2),
+                        DocDate = reader.FieldCount > 3 ? reader.GetString(3) : ""
+                    },
+                    TipoConexionSql.POS,
+                    CommandType.Text,
+                    _sql.CreateParameter("@DOCENTRY", docEntryPv.Value)
+                );
+
+                if (ordenActual != default && (!string.IsNullOrWhiteSpace(ordenActual.OrinRecord) || !string.IsNullOrWhiteSpace(ordenActual.NotaCredito)))
+                {
+                    var ncsOrdenActual = ExtraerNotasCreditoDeOrden(ordenActual.OrinRecord, ordenActual.NotaCredito);
+                    var ncsFaltantes = ncsOrdenActual.Where(ncReq => 
+                        !lista.Any(l => (ncReq.DocEntry > 0 && l.DOCENTRY == ncReq.DocEntry) || 
+                                        (ncReq.DocNum > 0 && l.DOCNUM == ncReq.DocNum) ||
+                                        (!string.IsNullOrEmpty(ncReq.NumAtCard) && !string.IsNullOrEmpty(l.NUMATCARD) && 
+                                         LimpiarPrefijoNumAtCard(l.NUMATCARD).Equals(LimpiarPrefijoNumAtCard(ncReq.NumAtCard), StringComparison.OrdinalIgnoreCase)))
+                    ).ToList();
+
+                    if (ncsFaltantes.Count > 0)
+                    {
+                        foreach (var falta in ncsFaltantes)
+                        {
+                            try
+                            {
+                                string sqlHanaNc = string.Format(
+                                    @"SELECT T0.""DocEntry"" AS ""DOCENTRY"",
+                                             COALESCE(NULLIF(TRIM(T0.""NumAtCard""), ''), TO_VARCHAR(T0.""DocNum"")) AS ""NUMATCARD"",
+                                             T0.""DocNum"" AS ""DOCNUM"",
+                                             T0.""CardCode"" AS ""CODIGO_CLIENTE"",
+                                             TO_VARCHAR(T0.""DocDate"", 'YYYY-MM-DD') AS ""FECHA"",
+                                             ROUND(T0.""DocTotal"", 2) AS ""TOTAL"",
+                                             T0.""DocCur"" AS ""MONEDA"",
+                                             T0.""DocStatus"" AS ""DOCSTATUS""
+                                      FROM ""{0}"".""ORIN"" T0
+                                      WHERE T0.""DocEntry"" = ? OR T0.""DocNum"" = ?",
+                                    _hana.CompanyDB
+                                );
+
+                                var ncHana = await _hana.QuerySingleOrDefaultAsync(
+                                    sqlHanaNc,
+                                    reader => new
+                                    {
+                                        DocEntry = reader.GetInt32(0),
+                                        NumAtCard = reader.IsDBNull(1) ? string.Empty : reader.GetString(1),
+                                        DocNum = reader.GetInt32(2),
+                                        CardCode = reader.IsDBNull(3) ? string.Empty : reader.GetString(3),
+                                        Fecha = reader.IsDBNull(4) ? string.Empty : reader.GetString(4),
+                                        Total = reader.GetDecimal(5),
+                                        Moneda = reader.IsDBNull(6) ? string.Empty : reader.GetString(6),
+                                        DocStatus = reader.IsDBNull(7) ? string.Empty : reader.GetString(7)
+                                    },
+                                    CommandType.Text,
+                                    _hana.CreateParameter("p1", falta.DocEntry > 0 ? falta.DocEntry : falta.DocNum),
+                                    _hana.CreateParameter("p2", falta.DocNum > 0 ? falta.DocNum : falta.DocEntry)
+                                );
+
+                                decimal saldoUsado = falta.Monto > 0 ? falta.Monto : (ncHana?.Total ?? 0);
+
+                                var dtoCerrada = new NotaCreditoClienteSapDTO
+                                {
+                                    DOCENTRY = ncHana?.DocEntry ?? (falta.DocEntry > 0 ? falta.DocEntry : falta.DocNum),
+                                    DOCNUM = ncHana?.DocNum ?? falta.DocNum,
+                                    NUMATCARD = !string.IsNullOrEmpty(ncHana?.NumAtCard) ? ncHana.NumAtCard : (!string.IsNullOrEmpty(falta.NumAtCard) ? falta.NumAtCard : $"NC {falta.DocNum}"),
+                                    CODIGO_CLIENTE = codigoCliente,
+                                    FECHA = ncHana?.Fecha ?? string.Empty,
+                                    SALDO = saldoUsado,
+                                    TOTAL = ncHana?.Total ?? saldoUsado,
+                                    MONEDA = ncHana?.Moneda ?? "SOL",
+                                    ES_CERRADA = ncHana?.DocStatus == "C" || true,
+                                    EN_USO = true,
+                                    DOCENTRY_ORDEN_USO = docEntryPv.Value,
+                                    DOCNUM_SAP_ORDEN_USO = !string.IsNullOrWhiteSpace(ordenActual.DocNumSap) ? ordenActual.DocNumSap.Trim() : null,
+                                    FECHA_ORDEN_USO = !string.IsNullOrWhiteSpace(ordenActual.DocDate) ? ordenActual.DocDate.Trim() : null,
+                                    ES_MISMA_ORDEN = true
+                                };
+
+                                lista.Add(dtoCerrada);
+                            }
+                            catch (Exception exHana)
+                            {
+                                Console.WriteLine($"[BuscarNotasCreditoCliente] Error al buscar NC cerrada en SAP HANA: {exHana.Message}");
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception exCerradas)
+            {
+                Console.WriteLine($"[BuscarNotasCreditoCliente] Error al recuperar NCs de la orden consultada: {exCerradas.Message}");
+            }
+        }
+
         if (lista.Count == 0 || !validarEnUso) return lista;
 
         try
@@ -415,18 +525,50 @@ public class PuntoVenta : IPuntoVenta
                     DocEntry: reader.GetInt32(0),
                     OrinRecord: reader.GetString(2),
                     NotaCredito: reader.GetString(3),
-                    DocNumSap: reader.FieldCount > 4 && !reader.IsDBNull(4) ? reader.GetString(4) : string.Empty
+                    DocNumSap: reader.FieldCount > 4 && !reader.IsDBNull(4) ? reader.GetString(4) : string.Empty,
+                    DocDate: reader.FieldCount > 5 && !reader.IsDBNull(5) ? reader.GetString(5) : string.Empty
                 ),
                 TipoConexionSql.POS,
                 CommandType.StoredProcedure,
                 _sql.CreateParameter("@CARDCODE", codigoCliente),
-                _sql.CreateParameter("@DOCENTRY_PV", docEntryPv ?? 0)
+                _sql.CreateParameter("@DOCENTRY_PV", 0) // Validar todas las órdenes activas
             );
+
+            // Fallback resiliente: Si el SP en base de datos aún no ha sido actualizado con la columna DOCDATE,
+            // consultar las fechas de las órdenes encontradas directamente de T_SK_ODOCS
+            var ordenesSinFecha = ordenesConNc.Where(o => string.IsNullOrWhiteSpace(o.DocDate) && o.DocEntry > 0).Select(o => o.DocEntry).Distinct().ToList();
+            var fechasDict = new Dictionary<int, string>();
+            if (ordenesSinFecha.Count > 0)
+            {
+                try
+                {
+                    var sqlFechas = $"SELECT DOCENTRY, ISNULL(CONVERT(VARCHAR(10), DOCDATE, 103), '') AS DOCDATE FROM T_SK_ODOCS WITH (NOLOCK) WHERE DOCENTRY IN ({string.Join(",", ordenesSinFecha)})";
+                    var fechasList = await _sql.QueryListAsync(
+                        sqlFechas,
+                        r => (DocEntry: r.GetInt32(0), DocDate: r.GetString(1)),
+                        TipoConexionSql.POS,
+                        CommandType.Text
+                    );
+                    foreach (var f in fechasList)
+                    {
+                        fechasDict[f.DocEntry] = f.DocDate;
+                    }
+                }
+                catch (Exception exFmt)
+                {
+                    Console.WriteLine($"[BuscarNotasCreditoCliente] Error al consultar fechas de órdenes en T_SK_ODOCS: {exFmt.Message}");
+                }
+            }
 
             if (ordenesConNc.Count > 0)
             {
                 foreach (var orden in ordenesConNc)
                 {
+                    bool esMismaOrden = docEntryPv.HasValue && docEntryPv.Value > 0 && orden.DocEntry == docEntryPv.Value;
+                    string? fechaOrden = !string.IsNullOrWhiteSpace(orden.DocDate)
+                        ? orden.DocDate.Trim()
+                        : (fechasDict.TryGetValue(orden.DocEntry, out var fd) && !string.IsNullOrWhiteSpace(fd) ? fd.Trim() : null);
+
                     // 1. Verificación por ORIN_RECORD
                     if (!string.IsNullOrWhiteSpace(orden.OrinRecord))
                     {
@@ -459,29 +601,31 @@ public class PuntoVenta : IPuntoVenta
                                             nc.EN_USO = true;
                                             nc.DOCENTRY_ORDEN_USO = orden.DocEntry;
                                             nc.DOCNUM_SAP_ORDEN_USO = !string.IsNullOrWhiteSpace(orden.DocNumSap) ? orden.DocNumSap.Trim() : null;
+                                            nc.FECHA_ORDEN_USO = fechaOrden;
+                                            if (esMismaOrden) nc.ES_MISMA_ORDEN = true;
                                         }
                                     }
                                 }
                             }
                             else
                             {
-                                // Formato anterior (retrocompatibilidad): DOCNUM.SALDO (donde saldo puede tener decimales, ej: 1403.11.71)
+                                // Formato anterior: DOCNUM.SALDO
                                 var firstDot = trimmed.IndexOf('.');
                                 if (firstDot > 0 && firstDot < trimmed.Length - 1)
                                 {
                                     var docNumStr = trimmed.Substring(0, firstDot);
-                                    var saldoStr = trimmed.Substring(firstDot + 1).Trim().Replace(',', '.');
 
-                                    if (int.TryParse(docNumStr.Trim(), out int docNumNc) &&
-                                        decimal.TryParse(saldoStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out decimal saldoNc))
+                                    if (int.TryParse(docNumStr.Trim(), out int docNumNc))
                                     {
                                         foreach (var nc in lista)
                                         {
-                                            if (nc.DOCNUM == docNumNc && Math.Abs(nc.SALDO - saldoNc) < 0.05m)
+                                            if (nc.DOCNUM == docNumNc)
                                             {
                                                 nc.EN_USO = true;
                                                 nc.DOCENTRY_ORDEN_USO = orden.DocEntry;
                                                 nc.DOCNUM_SAP_ORDEN_USO = !string.IsNullOrWhiteSpace(orden.DocNumSap) ? orden.DocNumSap.Trim() : null;
+                                                nc.FECHA_ORDEN_USO = fechaOrden;
+                                                if (esMismaOrden) nc.ES_MISMA_ORDEN = true;
                                             }
                                         }
                                     }
@@ -498,7 +642,6 @@ public class PuntoVenta : IPuntoVenta
                             var limpio = ncTexto.Trim();
                             if (string.IsNullOrEmpty(limpio)) continue;
 
-                            // Si viene con formato NUMATCARD;MONTO_C, aislar NUMATCARD
                             var numAtCardOrden = limpio.Split(';')[0].Trim();
 
                             foreach (var nc in lista)
@@ -509,6 +652,8 @@ public class PuntoVenta : IPuntoVenta
                                     nc.EN_USO = true;
                                     nc.DOCENTRY_ORDEN_USO = orden.DocEntry;
                                     nc.DOCNUM_SAP_ORDEN_USO = !string.IsNullOrWhiteSpace(orden.DocNumSap) ? orden.DocNumSap.Trim() : null;
+                                    nc.FECHA_ORDEN_USO = fechaOrden;
+                                    if (esMismaOrden) nc.ES_MISMA_ORDEN = true;
                                 }
                             }
                         }
@@ -522,6 +667,66 @@ public class PuntoVenta : IPuntoVenta
         }
 
         return lista;
+    }
+
+    private static List<(int DocEntry, int DocNum, string NumAtCard, decimal Monto)> ExtraerNotasCreditoDeOrden(string? orinRecord, string? notaCredito)
+    {
+        var result = new List<(int DocEntry, int DocNum, string NumAtCard, decimal Monto)>();
+
+        if (!string.IsNullOrWhiteSpace(orinRecord))
+        {
+            var partes = orinRecord.Split(';', StringSplitOptions.RemoveEmptyEntries);
+            foreach (var parte in partes)
+            {
+                var trimmed = parte.Trim();
+                if (string.IsNullOrEmpty(trimmed)) continue;
+
+                if (trimmed.Contains('|'))
+                {
+                    // 1|DOCENTRY|SALDO|NUMATCARD
+                    var tokens = trimmed.Split('|');
+                    if (tokens.Length >= 3)
+                    {
+                        int.TryParse(tokens[1].Trim(), out int de);
+                        var saldoStr = tokens[2].Trim().Replace(',', '.');
+                        decimal.TryParse(saldoStr, NumberStyles.Any, CultureInfo.InvariantCulture, out decimal monto);
+                        string numAtCard = tokens.Length >= 4 ? tokens[3].Trim() : string.Empty;
+                        result.Add((de, 0, numAtCard, monto));
+                    }
+                }
+                else
+                {
+                    // DOCNUM.SALDO
+                    var firstDot = trimmed.IndexOf('.');
+                    if (firstDot > 0 && firstDot < trimmed.Length - 1)
+                    {
+                        int.TryParse(trimmed.Substring(0, firstDot).Trim(), out int dn);
+                        var saldoStr = trimmed.Substring(firstDot + 1).Trim().Replace(',', '.');
+                        decimal.TryParse(saldoStr, NumberStyles.Any, CultureInfo.InvariantCulture, out decimal monto);
+                        result.Add((0, dn, string.Empty, monto));
+                    }
+                }
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(notaCredito))
+        {
+            var partes = notaCredito.Split('|', StringSplitOptions.RemoveEmptyEntries);
+            foreach (var p in partes)
+            {
+                var trimmed = p.Trim();
+                if (string.IsNullOrEmpty(trimmed)) continue;
+                var tokens = trimmed.Split(';');
+                var numAtCard = tokens[0].Trim();
+                decimal monto = 0;
+                if (tokens.Length > 1)
+                {
+                    decimal.TryParse(tokens[1].Trim().Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out monto);
+                }
+                result.Add((0, 0, numAtCard, monto));
+            }
+        }
+
+        return result;
     }
 
     private static NotaCreditoClienteSapDTO MapNotaCreditoClienteSap(DbDataReader reader)
@@ -956,6 +1161,23 @@ public class PuntoVenta : IPuntoVenta
                                     if (coincideDocEntry || coincideNumAtCard)
                                     {
                                         string identificador = !string.IsNullOrEmpty(reqNc.NumAtCard) ? reqNc.NumAtCard : (deOrden > 0 ? $"DocEntry {deOrden}" : "seleccionada");
+                                        return (false, $"La nota de crédito \"{identificador}\" ya está siendo utilizada en la orden N° {orden.DocEntry}. No se puede guardar la venta.");
+                                    }
+                                }
+                            }
+                        }
+                        else
+                        {
+                            // Formato anterior: DOCNUM.SALDO
+                            var firstDot = trimmed.IndexOf('.');
+                            if (firstDot > 0 && firstDot < trimmed.Length - 1)
+                            {
+                                int.TryParse(trimmed.Substring(0, firstDot).Trim(), out int dnOrden);
+                                foreach (var reqNc in ncsRequest)
+                                {
+                                    if (reqNc.DocEntry > 0 && reqNc.DocEntry == dnOrden)
+                                    {
+                                        string identificador = !string.IsNullOrEmpty(reqNc.NumAtCard) ? reqNc.NumAtCard : $"NC {dnOrden}";
                                         return (false, $"La nota de crédito \"{identificador}\" ya está siendo utilizada en la orden N° {orden.DocEntry}. No se puede guardar la venta.");
                                     }
                                 }
@@ -4164,14 +4386,19 @@ public class PuntoVenta : IPuntoVenta
         public string OrinRecord { get; set; } = "";
         public string DocStatus { get; set; } = "";
         public string SendStatus { get; set; } = "";
+        public string NotaCredito { get; set; } = "";
+        public string DocNumSap { get; set; } = "";
+        public string CardCode { get; set; } = "";
+        public string DocDate { get; set; } = "";
     }
 
-    public async Task<(string? OrinRecord, string? DocStatus, string? EstadoEnvio, bool EsModificable)> ObtenerDatosNotasCreditoOrden(int docEntry)
+    public async Task<(string? OrinRecord, string? DocStatus, string? EstadoEnvio, bool EsModificable, List<NotaCreditoOrdenItemDTO> Items)> ObtenerDatosNotasCreditoOrden(int docEntry)
     {
         const string sql = @"
             SELECT ISNULL(ORIN_RECORD, '') AS ORIN_RECORD,
                    ISNULL(DOCSTATUS, '') AS DOCSTATUS,
-                   ISNULL(SENDSTATUS, '') AS SENDSTATUS
+                   ISNULL(SENDSTATUS, '') AS SENDSTATUS,
+                   ISNULL(CARDCODE, '') AS CARDCODE
             FROM T_SK_ODOCS WITH (NOLOCK)
             WHERE DOCENTRY = @DOCENTRY";
 
@@ -4181,7 +4408,8 @@ public class PuntoVenta : IPuntoVenta
             {
                 OrinRecord = reader.GetString(0),
                 DocStatus = reader.GetString(1).Trim().ToUpperInvariant(),
-                SendStatus = reader.GetString(2).Trim().ToUpperInvariant()
+                SendStatus = reader.GetString(2).Trim().ToUpperInvariant(),
+                CardCode = reader.GetString(3).Trim()
             },
             TipoConexionSql.POS,
             CommandType.Text,
@@ -4190,7 +4418,7 @@ public class PuntoVenta : IPuntoVenta
 
         if (datos == null)
         {
-            return (null, null, null, false);
+            return (null, null, null, false, new List<NotaCreditoOrdenItemDTO>());
         }
 
         string docStatus = datos.DocStatus;
@@ -4217,7 +4445,188 @@ public class PuntoVenta : IPuntoVenta
         bool esPermitido = docStatus is "O" or "W";
         bool esModificable = !esCancelado && esPermitido;
 
-        return (datos.OrinRecord, docStatus, estadoEnvio, esModificable);
+        var items = new List<NotaCreditoOrdenItemDTO>();
+        var rawRecord = !string.IsNullOrWhiteSpace(datos.OrinRecord) ? datos.OrinRecord : string.Empty;
+
+        if (!string.IsNullOrWhiteSpace(rawRecord))
+        {
+            var tokens = rawRecord.Split(';', StringSplitOptions.RemoveEmptyEntries);
+            int idx = 0;
+            foreach (var t in tokens)
+            {
+                var trimmed = t.Trim();
+                if (string.IsNullOrEmpty(trimmed)) continue;
+
+                if (trimmed.Contains('|'))
+                {
+                    // Formato nuevo: ESTADO|DOCENTRY|SALDO|NUMATCARD
+                    var parts = trimmed.Split('|');
+                    var estado = (parts[0] ?? "1").Trim();
+                    int.TryParse(parts.Length > 1 ? parts[1].Trim() : "0", out int deSap);
+                    decimal.TryParse(parts.Length > 2 ? parts[2].Trim().Replace(',', '.') : "0", NumberStyles.Any, CultureInfo.InvariantCulture, out decimal monto);
+                    string numAtCard = parts.Length > 3 ? parts[3].Trim() : string.Empty;
+
+                    items.Add(new NotaCreditoOrdenItemDTO
+                    {
+                        Index = idx++,
+                        Estado = estado == "0" ? "0" : "1",
+                        DocEntrySap = deSap,
+                        DocNum = 0,
+                        NumAtCard = numAtCard,
+                        Monto = monto,
+                        EsFormatoAntiguo = false,
+                        PermiteModificar = esModificable
+                    });
+                }
+                else if (trimmed.Contains('.'))
+                {
+                    // Formato antiguo: DOCNUM.SALDO (o DOCNUM.SALDO.DECIMAL)
+                    var firstDot = trimmed.IndexOf('.');
+                    if (firstDot > 0 && firstDot < trimmed.Length - 1)
+                    {
+                        int.TryParse(trimmed.Substring(0, firstDot).Trim(), out int docNum);
+                        decimal.TryParse(trimmed.Substring(firstDot + 1).Trim().Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out decimal monto);
+
+                        items.Add(new NotaCreditoOrdenItemDTO
+                        {
+                            Index = idx++,
+                            Estado = "1",
+                            DocEntrySap = 0,
+                            DocNum = docNum,
+                            NumAtCard = string.Format("NC {0}", docNum),
+                            Monto = monto,
+                            EsFormatoAntiguo = true,
+                            PermiteModificar = esModificable
+                        });
+                    }
+                }
+                else if (int.TryParse(trimmed, out int docNumSolo) && docNumSolo > 0)
+                {
+                    // Formato antiguo: solo DOCNUM sin saldo
+                    items.Add(new NotaCreditoOrdenItemDTO
+                    {
+                        Index = idx++,
+                        Estado = "1",
+                        DocEntrySap = 0,
+                        DocNum = docNumSolo,
+                        NumAtCard = string.Format("NC {0}", docNumSolo),
+                        Monto = 0m,
+                        EsFormatoAntiguo = true,
+                        PermiteModificar = esModificable
+                    });
+                }
+            }
+
+            // Enriquecer datos con SAP HANA para obtener DocEntry real, NumAtCard real y verificar si está cerrada en SAP
+            if (items.Count > 0)
+            {
+                try
+                {
+                    var docEntriesBuscar = items.Where(i => i.DocEntrySap > 0).Select(i => i.DocEntrySap).Distinct().ToList();
+                    var docNumsBuscar = items.Where(i => i.DocNum > 0).Select(i => i.DocNum).Distinct().ToList();
+
+                    if (docEntriesBuscar.Count > 0 || docNumsBuscar.Count > 0)
+                    {
+                        var conditions = new List<string>();
+                        if (docEntriesBuscar.Count > 0)
+                            conditions.Add(string.Format("T0.\"DocEntry\" IN ({0})", string.Join(",", docEntriesBuscar)));
+                        if (docNumsBuscar.Count > 0)
+                            conditions.Add(string.Format("T0.\"DocNum\" IN ({0})", string.Join(",", docNumsBuscar)));
+
+                        string sqlHana = string.Format(
+                            @"SELECT T0.""DocEntry"" AS ""DOCENTRY"",
+                                     COALESCE(NULLIF(TRIM(T0.""NumAtCard""), ''), TO_VARCHAR(T0.""DocNum"")) AS ""NUMATCARD"",
+                                     T0.""DocNum"" AS ""DOCNUM"",
+                                     ROUND(T0.""DocTotal"", 2) AS ""TOTAL"",
+                                     T0.""DocStatus"" AS ""DOCSTATUS"",
+                                     T0.""CardCode"" AS ""CARDCODE""
+                              FROM ""{0}"".""ORIN"" T0
+                              WHERE {1}",
+                            _hana.CompanyDB,
+                            string.Join(" OR ", conditions)
+                        );
+
+                        var ncsHana = await _hana.QueryListAsync(
+                            sqlHana,
+                            reader => new
+                            {
+                                DocEntry = reader.GetInt32(0),
+                                NumAtCard = reader.IsDBNull(1) ? string.Empty : reader.GetString(1),
+                                DocNum = reader.GetInt32(2),
+                                Total = reader.GetDecimal(3),
+                                DocStatus = reader.IsDBNull(4) ? string.Empty : reader.GetString(4),
+                                CardCode = reader.IsDBNull(5) ? string.Empty : reader.GetString(5)
+                            },
+                            CommandType.Text
+                        );
+
+                        foreach (var it in items)
+                        {
+                            // 1. Prioridad: Match por DocEntry exacto
+                            var match = ncsHana.FirstOrDefault(h => it.DocEntrySap > 0 && h.DocEntry == it.DocEntrySap);
+
+                            // 2. Prioridad: Match por DocNum y CardCode de la orden
+                            if (match == null && it.DocNum > 0)
+                            {
+                                match = ncsHana.FirstOrDefault(h =>
+                                    h.DocNum == it.DocNum &&
+                                    (!string.IsNullOrEmpty(datos.CardCode) && h.CardCode == datos.CardCode)
+                                );
+                            }
+
+                            // 3. Prioridad: Match por DocNum y Monto coincidente
+                            if (match == null && it.DocNum > 0)
+                            {
+                                match = ncsHana.FirstOrDefault(h =>
+                                    h.DocNum == it.DocNum &&
+                                    (it.Monto > 0 && Math.Abs(h.Total - it.Monto) < 0.05m)
+                                );
+                            }
+
+                            // 4. Prioridad: Primer match disponible por DocNum
+                            if (match == null && it.DocNum > 0)
+                            {
+                                match = ncsHana.FirstOrDefault(h => h.DocNum == it.DocNum);
+                            }
+
+                            if (match != null)
+                            {
+                                it.DocEntrySap = match.DocEntry;
+                                it.DocNum = match.DocNum;
+                                if (!string.IsNullOrEmpty(match.NumAtCard))
+                                    it.NumAtCard = match.NumAtCard;
+                                if (it.Monto <= 0 && match.Total > 0)
+                                    it.Monto = match.Total;
+
+                                it.EsCerradaSap = match.DocStatus == "C";
+                                if (it.EsCerradaSap)
+                                {
+                                    it.PermiteModificar = false;
+                                }
+                            }
+                            else
+                            {
+                                if (it.DocEntrySap <= 0 && it.DocNum > 0)
+                                    it.DocEntrySap = it.DocNum;
+                                if (string.IsNullOrEmpty(it.NumAtCard) && it.DocNum > 0)
+                                    it.NumAtCard = string.Format("NC {0}", it.DocNum);
+                            }
+                        }
+                    }
+                }
+                catch (Exception exHana)
+                {
+                    Console.WriteLine(string.Format("[ObtenerDatosNotasCreditoOrden] Error al enriquecer con SAP HANA: {0}", exHana.Message));
+                    foreach (var it in items)
+                    {
+                        if (it.DocEntrySap <= 0 && it.DocNum > 0) it.DocEntrySap = it.DocNum;
+                        if (string.IsNullOrEmpty(it.NumAtCard) && it.DocNum > 0) it.NumAtCard = string.Format("NC {0}", it.DocNum);
+                    }
+                }
+            }
+        }
+
+        return (datos.OrinRecord, docStatus, estadoEnvio, esModificable, items);
     }
 
     public async Task<bool> ActualizarEstadoNotasCredito(int docEntry, string orinRecord)

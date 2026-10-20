@@ -3476,7 +3476,8 @@ namespace API.Controllers
                     orinRecord = datos.OrinRecord ?? "",
                     docStatus = datos.DocStatus ?? "",
                     estadoEnvio = datos.EstadoEnvio ?? "",
-                    esModificable = datos.EsModificable
+                    esModificable = datos.EsModificable,
+                    items = datos.Items
                 });
             }
             catch (Exception ex)

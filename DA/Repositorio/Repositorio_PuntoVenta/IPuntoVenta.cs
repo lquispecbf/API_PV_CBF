@@ -88,6 +88,6 @@ public interface IPuntoVenta
 
     // Activar / Inactivar Notas de Crédito
     Task<string?> ObtenerOrinRecordOrden(int docEntry);
-    Task<(string? OrinRecord, string? DocStatus, string? EstadoEnvio, bool EsModificable)> ObtenerDatosNotasCreditoOrden(int docEntry);
+    Task<(string? OrinRecord, string? DocStatus, string? EstadoEnvio, bool EsModificable, List<NotaCreditoOrdenItemDTO> Items)> ObtenerDatosNotasCreditoOrden(int docEntry);
     Task<bool> ActualizarEstadoNotasCredito(int docEntry, string orinRecord);
 }

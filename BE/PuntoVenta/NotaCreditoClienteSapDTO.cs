@@ -13,4 +13,7 @@ public class NotaCreditoClienteSapDTO
     public bool EN_USO { get; set; }
     public int? DOCENTRY_ORDEN_USO { get; set; }
     public string? DOCNUM_SAP_ORDEN_USO { get; set; }
+    public string? FECHA_ORDEN_USO { get; set; }
+    public bool ES_CERRADA { get; set; }
+    public bool ES_MISMA_ORDEN { get; set; }
 }
