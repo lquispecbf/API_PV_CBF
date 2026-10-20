@@ -33,7 +33,7 @@ public class FiltroAuditoriaAttribute : IAsyncActionFilter
         string? usuarioId = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier) 
                             ?? httpContext.User.FindFirstValue("id_usuario");
 
-        string? ip = httpContext.Connection.RemoteIpAddress?.ToString();
+        string? ip = ObtenerIpCliente(httpContext);
         string userAgent = httpContext.Request.Headers["User-Agent"].ToString();
         string controller = context.RouteData.Values["controller"]?.ToString() ?? "";
         string action = context.RouteData.Values["action"]?.ToString() ?? "";
@@ -135,4 +135,36 @@ public class FiltroAuditoriaAttribute : IAsyncActionFilter
             }
         }
     }
+
+    private static string? ObtenerIpCliente(Microsoft.AspNetCore.Http.HttpContext httpContext)
+    {
+        try
+        {
+            // 1. Revisar cabecera X-Forwarded-For (reenviada por la UI o por un Reverse Proxy)
+            var forwardedHeader = httpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(forwardedHeader))
+            {
+                var primeraIp = forwardedHeader.Split(',')[0].Trim();
+                if (!string.IsNullOrWhiteSpace(primeraIp))
+                {
+                    return primeraIp;
+                }
+            }
+
+            // 2. Revisar cabecera X-Real-IP
+            var realIpHeader = httpContext.Request.Headers["X-Real-IP"].FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(realIpHeader))
+            {
+                return realIpHeader.Trim();
+            }
+
+            // 3. Fallback a la conexión TCP directa
+            return httpContext.Connection.RemoteIpAddress?.ToString();
+        }
+        catch
+        {
+            return httpContext.Connection.RemoteIpAddress?.ToString();
+        }
+    }
 }
+
