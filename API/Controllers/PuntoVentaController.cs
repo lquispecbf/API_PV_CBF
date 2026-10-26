@@ -168,18 +168,22 @@ namespace API.Controllers
         [RequierePermisoModulo("PuntoVenta:Venta")]
         [RequiereAccionPv(AccionesPvConstantes.VentaDescargarListaPrecios)]
         [HttpGet]
-        public async Task<IActionResult> ExportarListaPreciosCliente([FromQuery] string? itemCode = null)
+        public async Task<IActionResult> ExportarListaPreciosCliente(
+            [FromQuery] int priceList = 1,
+            [FromQuery] string? nombreLista = null,
+            [FromQuery] string? itemCode = null)
         {
             try
             {
-                var lista = await _puntoVenta.ObtenerListaPreciosClienteAsync(itemCode);
+                var lista = await _puntoVenta.ObtenerListaPreciosClienteAsync(priceList, itemCode);
                 if (lista == null || lista.Count == 0)
                 {
-                    return NotFound("No se encontraron artículos con stock para la lista de precios.");
+                    return NotFound("No se encontraron artículos con stock para la lista de precios seleccionada.");
                 }
 
-                var fileBytes = GenerarExcelListaPreciosCliente(lista);
-                string nombreArchivo = $"LISTA DE PRECIOS CBF {DateTime.Now:dd-MM-yyyy}.xlsx";
+                var fileBytes = GenerarExcelListaPreciosCliente(lista, nombreLista);
+                string sufijoLista = string.IsNullOrWhiteSpace(nombreLista) ? "CBF" : nombreLista.Trim();
+                string nombreArchivo = $"LISTA DE PRECIOS {sufijoLista} {DateTime.Now:dd-MM-yyyy}.xlsx";
 
                 return File(
                     fileBytes,
@@ -194,7 +198,7 @@ namespace API.Controllers
             }
         }
 
-        private static byte[] GenerarExcelListaPreciosCliente(List<ListaPrecioClienteItemDTO> lista)
+        private static byte[] GenerarExcelListaPreciosCliente(List<ListaPrecioClienteItemDTO> lista, string? nombreLista = null)
         {
             using var workbook = new XLWorkbook();
             var ws = workbook.Worksheets.Add("LISTA");
@@ -202,7 +206,9 @@ namespace API.Controllers
             // Fila 1: Título Principal
             ws.Range("B1:K1").Merge();
             var cellTitulo = ws.Cell("B1");
-            cellTitulo.Value = "LISTA DE PRECIOS GENERAL";
+            cellTitulo.Value = string.IsNullOrWhiteSpace(nombreLista)
+                ? "LISTA DE PRECIOS GENERAL"
+                : $"LISTA DE PRECIOS - {nombreLista.Trim().ToUpper()}";
             cellTitulo.Style.Font.Bold = true;
             cellTitulo.Style.Font.FontSize = 16;
             cellTitulo.Style.Font.FontColor = XLColor.White;
@@ -262,9 +268,11 @@ namespace API.Controllers
             ws.Cell("B7").Style.Font.FontColor = XLColor.FromHtml("#2c3e50");
 
             // Fila 8: Cabeceras de Tabla (Columnas B a K)
+            string sufijoCabecera = string.IsNullOrWhiteSpace(nombreLista) ? "" : $" ({nombreLista.Trim().ToUpper()})";
             string[] cabeceras = {
                 "CODIGO", "DESCRIPCION", "LABORATORIO", "PRINC. ACTIVO",
-                "F. POR VENCER", "PRECIO X CAJA", "PEDIDOS ", "TOTAL", "CANTIDAD ", "PRECIO X ESCALA"
+                "F. POR VENCER", "PRECIO X CAJA", "PEDIDOS ", "TOTAL",
+                $"CANTIDAD{sufijoCabecera}", $"PRECIO PROMOCION{sufijoCabecera}"
             };
 
             for (int col = 0; col < cabeceras.Length; col++)
@@ -369,8 +377,8 @@ namespace API.Controllers
             ws.Column(7).Width = 15; // PRECIO X CAJA
             ws.Column(8).Width = 12; // PEDIDOS
             ws.Column(9).Width = 15; // TOTAL
-            ws.Column(10).Width = 13; // CANTIDAD
-            ws.Column(11).Width = 16; // PRECIO X ESCALA
+            ws.Column(10).Width = Math.Max(14, ($"CANTIDAD{sufijoCabecera}".Length + 4));
+            ws.Column(11).Width = Math.Max(18, ($"PRECIO PROMOCION{sufijoCabecera}".Length + 4));
 
             using var stream = new MemoryStream();
             workbook.SaveAs(stream);

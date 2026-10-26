@@ -4131,14 +4131,15 @@ public class PuntoVenta : IPuntoVenta
         return await cmd.ExecuteNonQueryAsync();
     }
 
-    public async Task<List<ListaPrecioClienteItemDTO>> ObtenerListaPreciosClienteAsync(string? itemCode = null)
+    public async Task<List<ListaPrecioClienteItemDTO>> ObtenerListaPreciosClienteAsync(int priceList = 1, string? itemCode = null)
     {
-        var commandText = _hana.BuildProcedureCall("CBF_SP_PV_EXPORTAR_LISTA_PRECIOS_CLIENTE", 1);
+        var commandText = _hana.BuildProcedureCall("CBF_SP_PV_EXPORTAR_LISTA_PRECIOS_CLIENTE", 2);
         return await _hana.QueryListAsync(
             commandText,
             MapListaPrecioClienteItem,
             CommandType.Text,
-            _hana.CreateParameter("p1", string.IsNullOrWhiteSpace(itemCode) ? DBNull.Value : itemCode.Trim())
+            _hana.CreateParameter("p1", priceList <= 0 ? 1 : priceList),
+            _hana.CreateParameter("p2", string.IsNullOrWhiteSpace(itemCode) ? DBNull.Value : itemCode.Trim())
         );
     }
 
