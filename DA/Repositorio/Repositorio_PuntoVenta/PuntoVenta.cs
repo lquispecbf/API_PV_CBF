@@ -953,21 +953,36 @@ public class PuntoVenta : IPuntoVenta
             decimal cantidad = d.QUANTITY;
 
             var promos = artDetalle.PROMOS ?? new List<PromoArticuloSapDTO>();
-            var lineaBase = promos.FirstOrDefault(p => !string.IsNullOrWhiteSpace(p.PROMO_TYPE));
+
+            // Filtrar estrictamente por la Unidad de Medida (UMD) de la línea que se está vendiendo.
+            // Si la promoción configurada no coincide con la UMD seleccionada en la venta,
+            // la promoción NO aplica para esta línea y se debe considerar el precio de lista regular sin descuento.
+            string umdLinea = (d.UMD_NOMBRE ?? umd?.NOMBRE ?? umd?.CODIGO ?? "").Trim();
+            var promosUmd = promos.Where(p =>
+            {
+                if (string.IsNullOrWhiteSpace(p.PROMO_TYPE)) return false;
+                if (string.IsNullOrWhiteSpace(p.UMD)) return true;
+                var pUmd = p.UMD.Trim();
+                return string.Equals(pUmd, umdLinea, StringComparison.OrdinalIgnoreCase)
+                    || (umd != null && (string.Equals(pUmd, (umd.CODIGO ?? "").Trim(), StringComparison.OrdinalIgnoreCase)
+                                     || string.Equals(pUmd, (umd.NOMBRE ?? "").Trim(), StringComparison.OrdinalIgnoreCase)));
+            }).ToList();
+
+            var lineaBase = promosUmd.FirstOrDefault();
 
             if (lineaBase != null)
             {
                 switch (lineaBase.PROMO_TYPE)
                 {
                     case "P":
-                        var promoP = promos.FirstOrDefault(p => p.PROMO_TYPE == "P" && p.CANTIDAD == 0 && p.PRECIO > 0 && p.DESCUENTO == 0);
+                        var promoP = promosUmd.FirstOrDefault(p => p.PROMO_TYPE == "P" && p.CANTIDAD == 0 && p.PRECIO > 0 && p.DESCUENTO == 0);
                         if (promoP != null)
                         {
                             precioEsperado = promoP.PRECIO;
                         }
                         break;
                     case "Q":
-                        var promoQ = promos
+                        var promoQ = promosUmd
                             .Where(p => p.PROMO_TYPE == "Q" && p.CANTIDAD > 0 && p.PRECIO > 0 && p.DESCUENTO == 0 && cantidad >= p.CANTIDAD)
                             .OrderByDescending(p => p.CANTIDAD)
                             .FirstOrDefault();
@@ -977,7 +992,7 @@ public class PuntoVenta : IPuntoVenta
                         }
                         break;
                     case "D":
-                        var promoD = promos
+                        var promoD = promosUmd
                             .Where(p => p.PROMO_TYPE == "D" && p.PRECIO == 0 && p.DESCUENTO > 0 && cantidad >= p.CANTIDAD)
                             .OrderByDescending(p => p.CANTIDAD)
                             .FirstOrDefault();
@@ -987,7 +1002,7 @@ public class PuntoVenta : IPuntoVenta
                         }
                         break;
                     case "R":
-                        var promoR = promos
+                        var promoR = promosUmd
                             .Where(p => p.PROMO_TYPE == "R" && p.PRECIO == 0 && p.DESCUENTO == 0 && cantidad >= p.CANTIDAD)
                             .OrderByDescending(p => p.CANTIDAD)
                             .FirstOrDefault();
@@ -1727,6 +1742,13 @@ public class PuntoVenta : IPuntoVenta
 
     public async Task<List<PromoArticuloSapDTO>> BuscarPromoArticulo(string codigoArticulo, string codigoCliente, int codigoListaPrecio, int codigoUmd)
     {
+        if (codigoUmd <= 0)
+        {
+            var dict = await BuscarPromosArticulosBatch(new List<string> { codigoArticulo.Trim().ToUpperInvariant() }, codigoCliente, codigoListaPrecio);
+            dict.TryGetValue(codigoArticulo.Trim().ToUpperInvariant(), out var promos);
+            return promos ?? new List<PromoArticuloSapDTO>();
+        }
+
         var commandText = _hana.BuildProcedureCall("CBF_SP_PV_GET_PROMO", 4);
 
         return await _hana.QueryListAsync(
