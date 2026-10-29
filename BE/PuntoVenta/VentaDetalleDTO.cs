@@ -21,8 +21,12 @@ public class VentaDetalleDTO
     public decimal PRICE_BEF { get; set; }
     public string? PRICE_LIST { get; set; }
     public string? WMS_GIF { get; set; }
-    public decimal WMS_DSC { get; set; }
     public string? TIPO_CONTROLADO { get; set; } = "01";
+    public decimal WMS_DSC { get; set; } = 0;
+    public bool ES_MERCH { get; set; } = false;
+    public int? ID_ARTICULO_MERCH { get; set; }
+    public string? OBSERVACION_MERCH { get; set; }
+
 
     public List<VentaLoteDTO> LOTES { get; set; } = new();
 }

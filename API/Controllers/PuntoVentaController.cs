@@ -1091,6 +1091,16 @@ namespace API.Controllers
                     }
                 }
 
+                // Validación obligatoria: La venta debe contener al menos un artículo comercial SAP
+                var tieneArticuloSap = request.DETALLE != null && request.DETALLE.Any(d => !d.ES_MERCH && (esBorrador ? !string.IsNullOrWhiteSpace(d.ITEMCODE) : d.QUANTITY > 0));
+                if (!tieneArticuloSap)
+                {
+                    return BadRequest(new
+                    {
+                        error = "La venta debe incluir al menos un artículo de SAP. No está permitido registrar una orden únicamente con artículos de Merchandising."
+                    });
+                }
+
                 int codigoVendedorSap = ObtenerCodigoVendedorSap();
                 if (codigoVendedorSap > 0)
                 {
@@ -1103,6 +1113,14 @@ namespace API.Controllers
                             return StatusCode(403, new { error = "No tiene autorización para modificar esta orden de venta." });
                         }
                     }
+                }
+
+                if (request.SLPCODE <= 0)
+                {
+                    return BadRequest(new
+                    {
+                        error = "Debe seleccionar un vendedor válido para la orden de venta."
+                    });
                 }
 
                 var clienteBloqueado = await _puntoVenta.ValidarClienteBloqueado(request.CARDCODE);
@@ -1189,7 +1207,7 @@ namespace API.Controllers
 
                 var erroresFraccionados = new List<string>();
                 var itemcodesFraccion = request.DETALLE
-                    .Where(d => d.QUANTITY > 0)
+                    .Where(d => !d.ES_MERCH && d.QUANTITY > 0)
                     .Select(d => d.ITEMCODE ?? "")
                     .Distinct()
                     .ToList();
@@ -1204,7 +1222,7 @@ namespace API.Controllers
 
                 foreach (var d in request.DETALLE)
                 {
-                    if (d.QUANTITY <= 0) continue;
+                    if (d.ES_MERCH || d.QUANTITY <= 0) continue;
 
                     var umdNombre = (d.UMD_NOMBRE ?? "").Trim().ToUpperInvariant();
                     var esPza = umdNombre == "PZA" || umdNombre == "PIEZA";
@@ -1257,7 +1275,7 @@ namespace API.Controllers
                 if (!string.Equals(request.DOCSTATUS, "E", StringComparison.OrdinalIgnoreCase))
                 {
                     var itemcodesActivos = request.DETALLE
-                        .Where(d => d.QUANTITY > 0 && !string.IsNullOrWhiteSpace(d.ITEMCODE))
+                        .Where(d => !d.ES_MERCH && d.QUANTITY > 0 && !string.IsNullOrWhiteSpace(d.ITEMCODE))
                         .Select(d => d.ITEMCODE!.Trim().ToUpperInvariant())
                         .Distinct()
                         .ToList();
@@ -1292,7 +1310,7 @@ namespace API.Controllers
 
                         var erroresControlados = new List<string>();
 
-                        foreach (var det in request.DETALLE.Where(d => d.QUANTITY > 0 && !string.IsNullOrWhiteSpace(d.ITEMCODE)))
+                        foreach (var det in request.DETALLE.Where(d => !d.ES_MERCH && d.QUANTITY > 0 && !string.IsNullOrWhiteSpace(d.ITEMCODE)))
                         {
                             var codeUpper = det.ITEMCODE!.Trim().ToUpperInvariant();
                             if (detalleArticulosMap.TryGetValue(codeUpper, out var artInfo) && artInfo?.ARTICULO != null)
@@ -3546,7 +3564,26 @@ namespace API.Controllers
 
         #endregion
 
+        #region Merchandising PVD (Almacén Nicolás Arriola)
+
+        [HttpPost]
+        public async Task<IActionResult> Buscar_ArticulosMerch([FromBody] MerchBusquedaFiltroDTO? filtro)
+        {
+            try
+            {
+                var resultado = await _puntoVenta.BuscarArticulosMerch(filtro?.Filtro);
+                return Ok(resultado);
+            }
+            catch (Exception ex)
+            {
+                await _errores.Insertar_Exception(ex);
+                return StatusCode(500, new { error = $"Error al buscar artículos merchandising: {ex.Message}" });
+            }
+        }
+        #endregion
+
         #endregion
     }
 }
+
 

@@ -20,4 +20,5 @@ public class VentaListaDTO
     public int? DOCENTRY_SAP { get; set; }
     public int? DOCENTRY_OWTR { get; set; }
     public string? ORIN_RECORD { get; set; }
+    public string? MERCH { get; set; }
 }

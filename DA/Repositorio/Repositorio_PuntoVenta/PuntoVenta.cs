@@ -893,7 +893,7 @@ public class PuntoVenta : IPuntoVenta
             return (true, null);
 
         var lineasAValidar = request.DETALLE
-            .Where(d => !string.IsNullOrWhiteSpace(d.ITEMCODE) && d.QUANTITY > 0)
+            .Where(d => !d.ES_MERCH && !string.IsNullOrWhiteSpace(d.ITEMCODE) && d.QUANTITY > 0)
             .ToList();
 
         if (lineasAValidar.Count == 0)
@@ -2005,7 +2005,21 @@ public class PuntoVenta : IPuntoVenta
         using var con = new SqlConnection(_cadenaSQLPOS);
         await con.OpenAsync();
 
-        // 0. Validación de Notas de Crédito no utilizadas en otras órdenes activas y disponibles en SAP
+        // 0. Validación obligatoria de vendedor
+        if (request.SLPCODE <= 0)
+        {
+            throw new InvalidOperationException("Debe seleccionar un vendedor válido para registrar la orden de venta.");
+        }
+
+        // 0. Validación de existencia obligatoria de artículos SAP en la orden
+        var esBorrador = string.Equals(request.DOCSTATUS?.Trim(), "E", StringComparison.OrdinalIgnoreCase);
+        var tieneArticuloSap = request.DETALLE != null && request.DETALLE.Any(d => !d.ES_MERCH && (esBorrador ? !string.IsNullOrWhiteSpace(d.ITEMCODE) : d.QUANTITY > 0));
+        if (!tieneArticuloSap)
+        {
+            throw new InvalidOperationException("La venta debe incluir al menos un artículo de SAP. No está permitido registrar una orden únicamente con artículos de Merchandising.");
+        }
+
+        // 0.1 Validación de Notas de Crédito no utilizadas en otras órdenes activas y disponibles en SAP
         var validacionNc = await ValidarNotasCreditoDisponibles(request);
         if (!validacionNc.Valido)
         {
@@ -2110,22 +2124,70 @@ public class PuntoVenta : IPuntoVenta
                 using var cmdDel1 = new SqlCommand("DELETE FROM T_SK_DOCS1 WHERE DOCENTRY = @DOCENTRY", con, tran);
                 cmdDel1.Parameters.AddWithValue("@DOCENTRY", request.DOCENTRY);
                 await cmdDel1.ExecuteNonQueryAsync();
-                Console.WriteLine($"[TELEMETRIA-PV] 2. Validación y Limpieza Previa: {swStep.ElapsedMilliseconds} ms");
+
+                // Revertir stock de Merchandising previo si existían líneas Merch en la orden modificada
+                await AfectarStockMerch(con, tran, "REVERTIR", request.DOCENTRY, usuario ?? "PVD", "Reversión por modificación de orden en PVD");
+
+                using var cmdDelMerch = new SqlCommand("DELETE FROM T_SK_DOCS_MERCH WHERE DOCENTRY = @DOCENTRY", con, tran);
+                cmdDelMerch.Parameters.AddWithValue("@DOCENTRY", request.DOCENTRY);
+                await cmdDelMerch.ExecuteNonQueryAsync();
+
+                Console.WriteLine($"[TELEMETRIA-PV] 2. Validación y Limpieza Previa (incluye Merch): {swStep.ElapsedMilliseconds} ms");
             }
 
             swStep.Restart();
             int docEntry = await InsertarCabecera(con, tran, request);
             Console.WriteLine($"[TELEMETRIA-PV] 3. Insertar Cabecera (SOPH_SP_INS_UPD_SKODOCS): {swStep.ElapsedMilliseconds} ms -> DocEntry: {docEntry}");
 
+            // Separación estricta: Artículos SAP van a T_SK_DOCS1, Merchandising va exclusivamente a T_SK_DOCS_MERCH
+            var detallesSAP = request.DETALLE.Where(d => !d.ES_MERCH).ToList();
+            var detallesMerch = request.DETALLE.Where(d => d.ES_MERCH).ToList();
+
             int lineId = 1;
-            foreach (var detalle in request.DETALLE)
+            foreach (var detalle in detallesSAP)
             {
                 detalle.LINE_ID = lineId++;
             }
 
             swStep.Restart();
-            await InsertarDetallesYLotesBatch(con, tran, docEntry, request.DETALLE);
-            Console.WriteLine($"[TELEMETRIA-PV] 4. Inserción de Detalles y Lotes (Batch): {swStep.ElapsedMilliseconds} ms");
+            await InsertarDetallesYLotesBatch(con, tran, docEntry, detallesSAP);
+            Console.WriteLine($"[TELEMETRIA-PV] 4. Inserción de Detalles SAP y Lotes (Batch): {swStep.ElapsedMilliseconds} ms");
+
+            if (detallesMerch.Count > 0)
+            {
+                int lineIdMerch = 1;
+                foreach (var m in detallesMerch)
+                {
+                    m.LINE_ID = lineIdMerch++;
+                }
+                await InsertarDetallesMerchBatch(con, tran, docEntry, detallesMerch);
+                Console.WriteLine($"[TELEMETRIA-PV] 4.1 Inserción de Detalles Merchandising (T_SK_DOCS_MERCH): {detallesMerch.Count} líneas");
+
+                // Si no es borrador ("E"), descontar automáticamente el stock físico de Merchandising en Almacén Nicolás Arriola
+
+
+
+            if (request.DOCSTATUS != "E")
+                {
+                    await AfectarStockMerch(con, tran, "DESCONTAR", docEntry, usuario ?? "PVD", "Salida por venta en PVD");
+                }
+            }
+
+
+            // Actualización de columna MERCH en T_SK_ODOCS: CODIGO_MERCH1;DESCRIPCION_MERCH1;CANTIDAD1|... (o NULL si no hay merch)
+            string? columnaMerchFinal = FormatearColumnaMerch(detallesMerch, request.MERCH);
+            try
+            {
+                using var cmdUpdateMerchCol = new SqlCommand("UPDATE dbo.T_SK_ODOCS SET MERCH = @MERCH WHERE DOCENTRY = @DOCENTRY", con, tran);
+                cmdUpdateMerchCol.Parameters.AddWithValue("@DOCENTRY", docEntry);
+                cmdUpdateMerchCol.Parameters.AddWithValue("@MERCH", (object?)columnaMerchFinal ?? DBNull.Value);
+                await cmdUpdateMerchCol.ExecuteNonQueryAsync();
+            }
+            catch (Exception exMerchCol)
+            {
+                Console.WriteLine($"[MERCH-COLUMNA] Advertencia al actualizar columna MERCH en T_SK_ODOCS para DocEntry {docEntry}: {exMerchCol.Message}");
+            }
+
 
             if (request.DOCSTATUS != "E")
             {
@@ -2178,7 +2240,7 @@ public class PuntoVenta : IPuntoVenta
         }
         catch (Exception ex)
         {
-            tran.Rollback();
+            try { tran.Rollback(); } catch { }
             response.EXITO = false;
             response.MENSAJE = $"Error al guardar la venta: {ex.Message}";
             Console.WriteLine($"[TELEMETRIA-PV] ERROR: {ex.Message} (Tiempo hasta fallo: {swTotal.ElapsedMilliseconds} ms)");
@@ -2253,6 +2315,42 @@ public class PuntoVenta : IPuntoVenta
         return null;
     }
 
+    private static string? FormatearColumnaMerch(List<VentaDetalleDTO>? detallesMerch, string? merchRequest)
+    {
+        if (detallesMerch != null && detallesMerch.Count > 0)
+        {
+            var partes = new List<string>();
+            foreach (var m in detallesMerch)
+            {
+                var cod = (m.ITEMCODE ?? string.Empty).Trim();
+                var desc = (m.ITEMNAME ?? string.Empty).Trim();
+                if (desc.StartsWith("[MERCH]", StringComparison.OrdinalIgnoreCase))
+                {
+                    desc = desc.Substring(7).Trim();
+                }
+                desc = desc.Replace(";", " ").Replace("|", " ");
+
+                int cant = Convert.ToInt32(m.QUANTITY > 0 ? m.QUANTITY : 1);
+                if (!string.IsNullOrEmpty(cod))
+                {
+                    partes.Add($"{cod};{desc};{cant}");
+                }
+            }
+
+            if (partes.Count > 0)
+            {
+                return TruncarTexto(string.Join("|", partes) + "|", 4000);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(merchRequest))
+        {
+            return TruncarTexto(merchRequest.Trim(), 4000);
+        }
+
+        return null;
+    }
+
     private static string LimpiarPrefijoNumAtCard(string numAtCard)
     {
         if (string.IsNullOrWhiteSpace(numAtCard)) return string.Empty;
@@ -2280,6 +2378,8 @@ public class PuntoVenta : IPuntoVenta
         cmd.Parameters.AddWithValue("@ORIN_TOTAL", request.ORIN_TOTAL);
         string? notaCreditoFinal = FormatearColumnaNotaCredito(request.NOTA_CREDITO, request.ORIN_RECORD);
         cmd.Parameters.AddWithValue("@NOTA_CREDITO", (object?)notaCreditoFinal ?? DBNull.Value);
+        string? columnaMerchFinal = FormatearColumnaMerch(request.DETALLE?.Where(d => d.ES_MERCH).ToList(), request.MERCH);
+        cmd.Parameters.AddWithValue("@MERCH", (object?)columnaMerchFinal ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@IMP_DELIVERY", request.IMP_DELIVERY);
         cmd.Parameters.AddWithValue("@IMP_DSCTO", request.IMP_DSCTO);
         cmd.Parameters.AddWithValue("@IMP_NET", request.IMP_NET);
@@ -2309,7 +2409,22 @@ public class PuntoVenta : IPuntoVenta
         if (esActualizacion)
         {
             cmd.Parameters.AddWithValue("@DOCENTRY", request.DOCENTRY);
-            await cmd.ExecuteNonQueryAsync();
+            try
+            {
+                await cmd.ExecuteNonQueryAsync();
+            }
+            catch (SqlException exSql)
+            {
+                if (exSql.Number == 8144 || exSql.Message.IndexOf("demasiados argumentos", StringComparison.OrdinalIgnoreCase) >= 0 || exSql.Message.IndexOf("too many arguments", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    cmd.Parameters.Remove(cmd.Parameters["@MERCH"]);
+                    await cmd.ExecuteNonQueryAsync();
+                }
+                else
+                {
+                    throw;
+                }
+            }
             return request.DOCENTRY;
         }
         else
@@ -2318,7 +2433,22 @@ public class PuntoVenta : IPuntoVenta
             docEntryParam.Direction = ParameterDirection.Output;
             cmd.Parameters.Add(docEntryParam);
 
-            await cmd.ExecuteNonQueryAsync();
+            try
+            {
+                await cmd.ExecuteNonQueryAsync();
+            }
+            catch (SqlException exSql)
+            {
+                if (exSql.Number == 8144 || exSql.Message.IndexOf("demasiados argumentos", StringComparison.OrdinalIgnoreCase) >= 0 || exSql.Message.IndexOf("too many arguments", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    cmd.Parameters.Remove(cmd.Parameters["@MERCH"]);
+                    await cmd.ExecuteNonQueryAsync();
+                }
+                else
+                {
+                    throw;
+                }
+            }
 
             return Convert.ToInt32(docEntryParam.Value);
         }
@@ -2624,7 +2754,8 @@ public class PuntoVenta : IPuntoVenta
             DOCSTATUS = reader.IsDBNull(ordDocStatus) ? null : reader.GetString(ordDocStatus),
             DOCENTRY_SAP = reader.IsDBNull(ordDocEntrySap) ? 0 : reader.GetInt32(ordDocEntrySap),
             DOCENTRY_OWTR = reader.IsDBNull(ordDocEntryOwtr) ? 0 : reader.GetInt32(ordDocEntryOwtr),
-            ORIN_RECORD = TryGetString(reader, "ORIN_RECORD")
+            ORIN_RECORD = TryGetString(reader, "ORIN_RECORD"),
+            MERCH = TryGetString(reader, "MERCH")
         };
     }
 
@@ -2695,6 +2826,56 @@ public class PuntoVenta : IPuntoVenta
                 .ToList();
         }
 
+        // Cargar líneas de Merchandising asociadas desde T_SK_DOCS_MERCH
+        try
+        {
+            var merchItems = await _sql.QueryListAsync(
+                "dbo.CBF_SP_PV_LISTAR_MERCH_ORDEN",
+                reader => new VentaDetalleCargadoDTO
+                {
+                    LINE_ID = detalle.Count + (reader.IsDBNull(reader.GetOrdinal("LineId")) ? 1 : Convert.ToInt32(reader["LineId"])),
+                    ITEMCODE = reader.IsDBNull(reader.GetOrdinal("ItemCode")) ? "" : reader["ItemCode"].ToString(),
+                    ITEMNAME = reader.IsDBNull(reader.GetOrdinal("ItemName")) ? "" : reader["ItemName"].ToString(),
+                    CODEBARS = "-",
+                    QUANTITY = reader.IsDBNull(reader.GetOrdinal("Quantity")) ? 1 : Convert.ToInt32(reader["Quantity"]),
+                    PRICE = 0m,
+                    DSCT_PERCENT = 0m,
+                    IGV_AFECT = "EXO",
+                    LINE_TOTAL = 0m,
+                    UOMENTRY = 0,
+                    UGPENTRY = 0,
+                    PRICE_UOM = 0m,
+                    PRICE_BEF = 0m,
+                    PRICE_LIST = "0",
+                    WMS_GIF = "S",
+                    WMS_DSC = 0m,
+                    FORSALE = Enumerable.Range(0, reader.FieldCount).Any(i => string.Equals(reader.GetName(i), "StockDisponible", StringComparison.OrdinalIgnoreCase)) && !reader.IsDBNull(reader.GetOrdinal("StockDisponible"))
+                        ? Convert.ToDecimal(reader["StockDisponible"])
+                        : 0m,
+                    UMD_NOMBRE = reader.IsDBNull(reader.GetOrdinal("Uom")) ? "UND" : reader["Uom"].ToString(),
+                    UMD_FACTOR = 1m,
+                    FECHA_VENCIMIENTO = "",
+                    TIPO_CONTROLADO = "01",
+                    ES_MERCH = true,
+                    ID_ARTICULO_MERCH = reader.IsDBNull(reader.GetOrdinal("IdArticuloMerch")) ? 0 : Convert.ToInt32(reader["IdArticuloMerch"]),
+                    OBSERVACION_MERCH = reader.IsDBNull(reader.GetOrdinal("Observacion")) ? "" : reader["Observacion"].ToString(),
+                    LOTES = new List<VentaLoteCargadoDTO>()
+                },
+                TipoConexionSql.POS,
+                CommandType.StoredProcedure,
+                _sql.CreateParameter("@DOCENTRY", docEntry)
+            );
+
+            if (merchItems != null && merchItems.Count > 0)
+            {
+                detalle.AddRange(merchItems);
+            }
+        }
+        catch (Exception exMerch)
+        {
+            Console.WriteLine($"[MERCH-CARGAR] Advertencia al listar merchandising para DocEntry {docEntry}: {exMerch.Message}");
+        }
+
         header.DETALLE = detalle;
         return header;
     }
@@ -2708,7 +2889,7 @@ public class PuntoVenta : IPuntoVenta
         try
         {
             var codigos = venta.DETALLE
-                .Where(d => !string.IsNullOrWhiteSpace(d.ITEMCODE))
+                .Where(d => !d.ES_MERCH && !string.IsNullOrWhiteSpace(d.ITEMCODE))
                 .Select(d => d.ITEMCODE!.Trim().ToUpperInvariant())
                 .Distinct()
                 .ToList();
@@ -2716,7 +2897,7 @@ public class PuntoVenta : IPuntoVenta
             var whsCode = venta.WHSCODE ?? "";
 
             var taskUmds = BuscarUmdsArticulosBatch(codigos);
-            var tasksLotes = codigos.Select(async cod =>
+            Func<string, Task<(string ItemCode, List<LoteDisponibleSapDTO> Lotes)>> obtenerLotesFn = async cod =>
             {
                 try
                 {
@@ -2727,13 +2908,15 @@ public class PuntoVenta : IPuntoVenta
                 {
                     return (ItemCode: cod, Lotes: new List<LoteDisponibleSapDTO>());
                 }
-            }).ToList();
+            };
+            var tasksLotes = codigos.Select(obtenerLotesFn).ToList();
 
             await Task.WhenAll(taskUmds, Task.WhenAll(tasksLotes));
 
             var dictUmds = await taskUmds;
             var chunkLotes = await Task.WhenAll(tasksLotes);
             var dictLotes = chunkLotes.ToDictionary(x => x.ItemCode, x => x.Lotes, StringComparer.OrdinalIgnoreCase);
+
 
             foreach (var d in venta.DETALLE)
             {
@@ -2785,7 +2968,7 @@ public class PuntoVenta : IPuntoVenta
             }
 
             var lineasSinFecha = venta.DETALLE
-                .Where(d => string.IsNullOrWhiteSpace(d.FECHA_VENCIMIENTO) && !string.IsNullOrWhiteSpace(d.ITEMCODE))
+                .Where(d => !d.ES_MERCH && string.IsNullOrWhiteSpace(d.FECHA_VENCIMIENTO) && !string.IsNullOrWhiteSpace(d.ITEMCODE))
                 .ToList();
 
             if (lineasSinFecha.Count > 0)
@@ -2851,7 +3034,7 @@ public class PuntoVenta : IPuntoVenta
                         CAST(T0.""AbsEntry"" AS VARCHAR(50)) AS ""SYSNUMBER"",
                         T0.""DistNumber"" AS ""DISTNUMBER"",
                         TO_VARCHAR(T0.""ExpDate"", 'DD/MM/YYYY') AS ""FECHA_VENCIMIENTO""
-                    FROM OBTN T0
+                    FROM ""{_hana.CompanyDB}"".""OBTN"" T0
                     WHERE T0.""ItemCode"" IN ('{cods}')
                       AND T0.""ExpDate"" IS NOT NULL
                     ORDER BY T0.""ExpDate"" ASC";
@@ -3021,7 +3204,8 @@ public class PuntoVenta : IPuntoVenta
             NOTA_CREDITO = TryGetString(reader, "NOTA_CREDITO"),
             DOCSTATUS = TryGetString(reader, "DOCSTATUS"),
             SENDSTATUS = TryGetString(reader, "SENDSTATUS"),
-            DOCENTRY_SAP = TryGetInt32(reader, "DOCENTRY_SAP")
+            DOCENTRY_SAP = TryGetInt32(reader, "DOCENTRY_SAP"),
+            MERCH = TryGetString(reader, "MERCH")
         };
     }
 
@@ -3266,7 +3450,24 @@ public class PuntoVenta : IPuntoVenta
         param.Value = docEntry;
         cmd.Parameters.Add(param);
         await cmd.ExecuteNonQueryAsync();
+
+        // Revertir stock físico de merchandising en Almacén Nicolás Arriola si la orden tenía Merch
+        try
+        {
+            using var cmdRevMerch = new SqlCommand("dbo.CBF_SP_PV_AFECTAR_STOCK_MERCH_VENTA", con);
+            cmdRevMerch.CommandType = CommandType.StoredProcedure;
+            cmdRevMerch.Parameters.AddWithValue("@ACCION", "REVERTIR");
+            cmdRevMerch.Parameters.AddWithValue("@DOCENTRY", docEntry);
+            cmdRevMerch.Parameters.AddWithValue("@USUARIO", "PVD_ANULACION");
+            cmdRevMerch.Parameters.AddWithValue("@OBSERVACION", "Reversión por anulación de orden en PVD");
+            await cmdRevMerch.ExecuteNonQueryAsync();
+        }
+        catch (Exception exMerch)
+        {
+            Console.WriteLine($"[MERCH-ANULAR] Advertencia al revertir stock de Merch para orden {docEntry}: {exMerch.Message}");
+        }
     }
+
 
     public async Task TrasladarVenta(int docEntry, string? docStatusEsperado = null)
     {
@@ -4715,4 +4916,96 @@ public class PuntoVenta : IPuntoVenta
     }
 
     #endregion
+
+    #region Merchandising PVD (Almacén Nicolás Arriola - Modal de Venta)
+
+    public async Task<List<MerchArticuloVentaDTO>> BuscarArticulosMerch(string? filtro = null)
+    {
+        var lista = await _sql.QueryListAsync(
+            "dbo.CBF_SP_PV_BUSCAR_ARTICULOS_MERCH",
+            reader => new MerchArticuloVentaDTO
+            {
+                IdArticulo = Convert.ToInt32(reader["IdArticulo"]),
+                Codigo = reader["Codigo"]?.ToString() ?? "",
+                Nombre = reader["Nombre"]?.ToString() ?? "",
+                Descripcion = reader["Descripcion"]?.ToString() ?? "",
+                Categoria = reader["Categoria"]?.ToString() ?? "",
+                UnidadMedida = reader["UnidadMedida"]?.ToString() ?? "UND",
+                StockDisponible = reader.IsDBNull(reader.GetOrdinal("StockDisponible")) ? 0 : Convert.ToInt32(reader["StockDisponible"]),
+                IdSede = reader.IsDBNull(reader.GetOrdinal("IdSede")) ? 2 : Convert.ToInt32(reader["IdSede"]),
+                RutaImagen = reader["RutaImagen"]?.ToString() ?? ""
+            },
+            TipoConexionSql.POS,
+            CommandType.StoredProcedure,
+            _sql.CreateParameter("@FILTRO", string.IsNullOrWhiteSpace(filtro) ? (object)DBNull.Value : filtro.Trim())
+        );
+
+        Console.WriteLine($"[MERCH-PVD] BuscarArticulosMerch con filtro='{filtro}' retornó {lista.Count} artículos.");
+        return lista;
+    }
+
+    private async Task InsertarDetallesMerchBatch(SqlConnection con, SqlTransaction tran, int docEntry, List<VentaDetalleDTO> detallesMerch)
+    {
+        if (detallesMerch == null || detallesMerch.Count == 0) return;
+
+        foreach (var m in detallesMerch)
+        {
+            int idArticuloMerch = m.ID_ARTICULO_MERCH ?? 0;
+
+            // Auto-recuperación defensiva: Si ID_ARTICULO_MERCH viene en 0 o nulo (ej. borrador local antiguo),
+            // lo resolvemos directamente en BD desde [CBF].[dbo].[MERCH_ARTICULO] usando el código ITEMCODE
+            if (idArticuloMerch <= 0 && !string.IsNullOrWhiteSpace(m.ITEMCODE))
+            {
+                using var cmdBuscar = new SqlCommand(@"
+                    SELECT TOP 1 ID_ARTICULO 
+                    FROM [CBF].[dbo].[MERCH_ARTICULO] WITH (NOLOCK) 
+                    WHERE CODIGO = @CODIGO", con, tran);
+                cmdBuscar.Parameters.AddWithValue("@CODIGO", m.ITEMCODE.Trim());
+                var resId = await cmdBuscar.ExecuteScalarAsync();
+                if (resId != null && resId != DBNull.Value && int.TryParse(resId.ToString(), out int idRes) && idRes > 0)
+                {
+                    idArticuloMerch = idRes;
+                    m.ID_ARTICULO_MERCH = idRes;
+                }
+            }
+
+            if (idArticuloMerch <= 0)
+            {
+                throw new InvalidOperationException($"El artículo de merchandising '{m.ITEMCODE}' no existe en el catálogo maestro de Intranet (CBF.dbo.MERCH_ARTICULO) o su identificador es inválido.");
+            }
+
+            using var cmd = new SqlCommand(@"
+                INSERT INTO dbo.T_SK_DOCS_MERCH 
+                (DOCENTRY, LINE_ID, ID_ARTICULO_MERCH, ITEMCODE, ITEMNAME, QUANTITY, PRICE, LINE_TOTAL, FORSALE, UOM, OBSERVACION, USUARIO_REGISTRO)
+                VALUES 
+                (@DOCENTRY, @LINE_ID, @ID_ARTICULO_MERCH, @ITEMCODE, @ITEMNAME, @QUANTITY, 0, 0, @FORSALE, @UOM, @OBSERVACION, @USUARIO_REGISTRO)", con, tran);
+
+            cmd.Parameters.AddWithValue("@DOCENTRY", docEntry);
+            cmd.Parameters.AddWithValue("@LINE_ID", m.LINE_ID);
+            cmd.Parameters.AddWithValue("@ID_ARTICULO_MERCH", idArticuloMerch);
+            cmd.Parameters.AddWithValue("@ITEMCODE", (object?)m.ITEMCODE ?? "");
+            cmd.Parameters.AddWithValue("@ITEMNAME", (object?)m.ITEMNAME ?? "");
+            cmd.Parameters.AddWithValue("@QUANTITY", m.QUANTITY > 0 ? m.QUANTITY : 1);
+            cmd.Parameters.AddWithValue("@FORSALE", m.FORSALE);
+            cmd.Parameters.AddWithValue("@UOM", string.IsNullOrWhiteSpace(m.UMD_NOMBRE) ? "UND" : m.UMD_NOMBRE);
+            cmd.Parameters.AddWithValue("@OBSERVACION", (object?)m.OBSERVACION_MERCH ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@USUARIO_REGISTRO", "PVD");
+
+            await cmd.ExecuteNonQueryAsync();
+        }
+    }
+
+    private async Task AfectarStockMerch(SqlConnection con, SqlTransaction tran, string accion, int docEntry, string usuario, string observacion)
+    {
+        using var cmd = new SqlCommand("dbo.CBF_SP_PV_AFECTAR_STOCK_MERCH_VENTA", con, tran);
+        cmd.CommandType = CommandType.StoredProcedure;
+        cmd.Parameters.AddWithValue("@ACCION", accion);
+        cmd.Parameters.AddWithValue("@DOCENTRY", docEntry);
+        cmd.Parameters.AddWithValue("@USUARIO", usuario);
+        cmd.Parameters.AddWithValue("@OBSERVACION", observacion);
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    #endregion
 }
+

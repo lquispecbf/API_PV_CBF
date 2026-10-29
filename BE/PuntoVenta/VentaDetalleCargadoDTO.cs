@@ -23,5 +23,9 @@ public class VentaDetalleCargadoDTO
     public decimal UMD_FACTOR { get; set; }
     public string? FECHA_VENCIMIENTO { get; set; }
     public string? TIPO_CONTROLADO { get; set; } = "01";
+    public bool ES_MERCH { get; set; } = false;
+    public int? ID_ARTICULO_MERCH { get; set; }
+    public string? OBSERVACION_MERCH { get; set; }
     public List<VentaLoteCargadoDTO> LOTES { get; set; } = new();
 }
+

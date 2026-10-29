@@ -90,4 +90,8 @@ public interface IPuntoVenta
     Task<string?> ObtenerOrinRecordOrden(int docEntry);
     Task<(string? OrinRecord, string? DocStatus, string? EstadoEnvio, bool EsModificable, List<NotaCreditoOrdenItemDTO> Items)> ObtenerDatosNotasCreditoOrden(int docEntry);
     Task<bool> ActualizarEstadoNotasCredito(int docEntry, string orinRecord);
+
+    // Merchandising PVD (Almacén Nicolás Arriola - Modal de Venta)
+    Task<List<MerchArticuloVentaDTO>> BuscarArticulosMerch(string? filtro = null);
 }
+
