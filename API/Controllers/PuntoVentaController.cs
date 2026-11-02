@@ -1,4 +1,4 @@
-using BE;
+﻿using BE;
 using BE.PuntoVenta;
 using BE.Seguridad;
 using ClosedXML.Excel;
@@ -268,11 +268,17 @@ namespace API.Controllers
             ws.Cell("B7").Style.Font.FontColor = XLColor.FromHtml("#2c3e50");
 
             // Fila 8: Cabeceras de Tabla (Columnas B a K)
-            string sufijoCabecera = string.IsNullOrWhiteSpace(nombreLista) ? "" : $" ({nombreLista.Trim().ToUpper()})";
+            // Regla: Cuando la lista es GENERAL (o no especificada), la promocion en el detalle corresponde a ESCALA 1
+            string nombrePromo = string.IsNullOrWhiteSpace(nombreLista) ? "GENERAL" : nombreLista.Trim().ToUpper();
+            if (nombrePromo == "GENERAL")
+            {
+                nombrePromo = "ESCALA 1";
+            }
+            string sufijoCabeceraPromo = $" ({nombrePromo})";
             string[] cabeceras = {
                 "CODIGO", "DESCRIPCION", "LABORATORIO", "PRINC. ACTIVO",
                 "F. POR VENCER", "PRECIO X CAJA", "PEDIDOS ", "TOTAL",
-                $"CANTIDAD{sufijoCabecera}", $"PRECIO PROMOCION{sufijoCabecera}"
+                $"CANTIDAD{sufijoCabeceraPromo}", $"PRECIO PROMOCION{sufijoCabeceraPromo}"
             };
 
             for (int col = 0; col < cabeceras.Length; col++)
@@ -377,8 +383,8 @@ namespace API.Controllers
             ws.Column(7).Width = 15; // PRECIO X CAJA
             ws.Column(8).Width = 12; // PEDIDOS
             ws.Column(9).Width = 15; // TOTAL
-            ws.Column(10).Width = Math.Max(14, ($"CANTIDAD{sufijoCabecera}".Length + 4));
-            ws.Column(11).Width = Math.Max(18, ($"PRECIO PROMOCION{sufijoCabecera}".Length + 4));
+            ws.Column(10).Width = Math.Max(14, ($"CANTIDAD{sufijoCabeceraPromo}".Length + 4));
+            ws.Column(11).Width = Math.Max(18, ($"PRECIO PROMOCION{sufijoCabeceraPromo}".Length + 4));
 
             using var stream = new MemoryStream();
             workbook.SaveAs(stream);
