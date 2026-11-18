@@ -171,14 +171,18 @@ namespace API.Controllers
         public async Task<IActionResult> ExportarListaPreciosCliente(
             [FromQuery] int priceList = 1,
             [FromQuery] string? nombreLista = null,
-            [FromQuery] string? itemCode = null)
+            [FromQuery] string? itemCode = null,
+            [FromQuery] int incluirStockCero = 0)
         {
             try
             {
-                var lista = await _puntoVenta.ObtenerListaPreciosClienteAsync(priceList, itemCode);
+                var lista = await _puntoVenta.ObtenerListaPreciosClienteAsync(priceList, itemCode, incluirStockCero == 1);
                 if (lista == null || lista.Count == 0)
                 {
-                    return NotFound("No se encontraron artículos con stock para la lista de precios seleccionada.");
+                    string msgNoEncontrado = (incluirStockCero == 1)
+                        ? "No se encontraron artículos para la lista de precios seleccionada."
+                        : "No se encontraron artículos con stock para la lista de precios seleccionada.";
+                    return NotFound(msgNoEncontrado);
                 }
 
                 var fileBytes = GenerarExcelListaPreciosCliente(lista, nombreLista);
