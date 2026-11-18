@@ -1107,6 +1107,14 @@ namespace API.Controllers
                     });
                 }
 
+                if (string.IsNullOrWhiteSpace(request.SEND_PHONE))
+                {
+                    return BadRequest(new
+                    {
+                        error = "Debe ingresar el teléfono en la pestaña Logística."
+                    });
+                }
+
                 int codigoVendedorSap = ObtenerCodigoVendedorSap();
                 if (codigoVendedorSap > 0)
                 {
